@@ -1,0 +1,589 @@
+/*
+ * @Description: 
+ * @Author: Martin
+ * @Date: 2023-02-16 10:58:30
+ * @LastEditors: Martin
+ * @LastEditTime: 2023-02-16 17:50:37
+ */
+//SPDX-License-Identifier:MIT
+
+pragma solidity ^0.8.9;
+
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+
+import "../libraries/CoreLibrary.sol";
+import "../libraries/EthAddressLib.sol";
+import "../libraries/WadRayMath.sol";
+import "../configuration/LendingPoolAddressesProvider.sol";
+import "../tokenization/AToken.sol";
+import "../interfaces/ILendingRateOracle.sol";
+import "../interfaces/IReserveInterestRateStrategy.sol";
+
+contract LendingPoolCore {
+    using WadRayMath for uint256;
+    using SafeMath for uint256;
+    using CoreLibrary for CoreLibrary.ReserveData;
+    using CoreLibrary for CoreLibrary.UserReserveData;
+    using SafeERC20 for ERC20;
+    using Address for address payable;
+
+    event ReserveUpdate(
+        address indexed reserve,
+        uint256 liquidityRate,
+        uint256 stableBorrowRate,
+        uint256 variableBorrowRate,
+        uint256 liquidtyIndex,
+        uint256 variableBorrowIndex
+    );
+    
+    address public lendingPoolAddress;
+
+    LendingPoolAddressesProvider public addressesProvider;
+
+    modifier onlyLendingPool {
+        require(lendingPoolAddress == msg.sender, "The caller must be a lending pool contract");
+        _;
+    }
+
+    modifier onlyLendingPoolConfigurator {
+        require(
+            addressesProvider.getLendingPoolConfigurator() == msg.sender,
+            "The caller must be a lending pool configurator contract"
+        );
+        _;
+    }
+
+    mapping(address => CoreLibrary.ReserveData) internal reserves;
+    mapping(address => mapping(address => CoreLibrary.UserReserveData)) internal usersReserveData;
+
+    address[] public reservesList;
+
+    //todo
+    //Has a modifier named initializer in Aave's protocol.
+    function initialize(LendingPoolAddressesProvider _addressesProvider) public {
+        addressesProvider = _addressesProvider;
+    }
+
+    function updateStateOnDeposit(
+        address _reserve,
+        address _user,
+        uint256 _amount,
+        bool _isFirstDeposit
+    ) external onlyLendingPool {
+        reserves[_reserve].updateCumulativeIndexes();
+        updateReserveInterestRatesAndTimestampInternal(_reserve, _amount, 0);
+
+        if(_isFirstDeposit) {
+            setUserUseReserveCollateral(_reserve, _user, true);
+        }
+    }
+
+    function updateStateOnRedeem(
+        address _reserve,
+        address _user,
+        uint256 _amountRedeemed,
+        bool _userRedeemedEverything
+    ) external onlyLendingPool {
+        reserves[_reserve].updateCumulativeIndexes();
+        updateReserveInterestRatesAndTimestampInternal(_reserve, 0, _amountRedeemed);
+
+        if(_userRedeemedEverything) {
+            setUserUseReserveCollateral(_reserve, _user, false);
+        }
+    }
+
+    //function updateStateOnFlashLoan()
+    //todo
+
+    function updateStateOnBorrow(
+        address _reserve,
+        address _user,
+        uint256 _amountBorrowed,
+        uint256 _borrowFee,
+        CoreLibrary.InterestRateMode _rateMode
+    ) external onlyLendingPool returns(uint256, uint256) {
+        (
+            uint256 principalBorrowBalance,
+            ,
+            uint256 balanceIncrease
+        ) = getUserBorrowBalance(_reserve, _user);
+
+        
+        updateReserveStateOnBorrowInternal(
+            _reserve,
+            _user,
+            principalBorrowBalance,
+            balanceIncrease,
+            _amountBorrowed,
+            _rateMode
+        );
+
+        updateUserStateOnBorrowInternal(
+            _reserve,
+            _user,
+            _amountBorrowed,
+            balanceIncrease,
+            _borrowFee,
+            _rateMode
+        );
+        updateReserveInterestRatesAndTimestampInternal(_reserve, 0, _amountBorrowed);
+
+        return (getUserCurrentBorrowRate(_reserve, _user), balanceIncrease);
+    }
+
+    function updateStateOnRepay (
+        address _reserve,
+        address _user,
+        uint256 _paybackAmountMinusFees,
+        uint256 _originationFeeRepaid,
+        uint256 _balanceIncrease,
+        bool _repaidWholeLoan
+    ) external onlyLendingPool {
+        updateReserveStateOnRepayInternal(
+            _reserve,
+            _user,
+            _paybackAmountMinusFees,
+            _balanceIncrease
+        );
+        updateUserStateOnRepayInternal(
+            _reserve,
+            _user,
+            _paybackAmountMinusFees,
+            _originationFeeRepaid,
+            _balanceIncrease,
+            _repaidWholeLoan
+        );
+
+        updateReserveInterestRatesAndTimestampInternal(_reserve, _paybackAmountMinusFees, 0);
+    }
+
+    function updateStateOnSwapRate(
+        address _reserve,
+        address _user,
+        uint256 _principalBorrowBalance,
+        uint256 _compoundedBorrowBalance,
+        uint256 _balanceIncrease,
+        CoreLibrary.InterestRateMode _currentRateMode
+    ) external onlyLendingPool returns (CoreLibrary.InterestRateMode, uint256) {
+        updateReserveStateOnSwapRateInternal(
+            _reserve,
+            _user,
+            _principalBorrowBalance,
+            _compoundedBorrowBalance,
+            _currentRateMode
+        );
+
+        CoreLibrary.InterestRateMode newRateMode = updateUserStateOnSwapRateInternal(
+            _reserve,
+            _user,
+            _balanceIncrease,
+            _currentRateMode
+        );
+
+        updateReserveInterestRatesAndTimestampInternal(_reserve, 0, 0);
+
+        return (newRateMode, getUserCurrentBorrowRate(_reserve, _user));
+    }
+
+    //todo:updateStateOnLiquidation
+    function updateStateOnLiquidation(
+        address _principalReserve,
+        address _collateralReserve,
+        address _user,
+        uint256 _amountToLiquidate,
+        uint256 _collateralToLiquidate,
+        uint256 _feeLiquidated,
+        uint256 _liquidatedCollateralForFee,
+        uint256 _balanceIncrease,
+        bool _liquidatorReceivesAToken
+    ) external onlyLendingPool {
+        updatePrincipalReserveStateOnLiquidationInternal(
+            _principalReserve,
+            _user,
+            _amountToLiquidate,
+            _balanceIncrease
+        );
+
+        updateCollateralReserveStateOnLiquidationInternal(
+            _collateralReserve
+        );
+
+        updateUserStateOnLiquidationInternal(
+            _principalReserve,
+            _user,
+            _amountToLiquidate,
+            _feeLiquidated,
+            _balanceIncrease
+        );
+
+        updateReserveInterestRatesAndTimestampInternal(_principalReserve, _amountToLiquidate, 0);
+
+        if(!_liquidatorReceivesAToken) {
+            updateReserveInterestRatesAndTimestampInternal(
+                _collateralReserve,
+                0,
+                _collateralToLiquidate.add(_liquidatedCollateralForFee)
+            );
+        }
+    }
+
+    //todo:updateStateOnRebalance()
+
+    function setUserUseReserveCollateral(address _reserve, address _user, bool _useAsCollateral)
+        public
+        onlyLendingPool
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        user.useAsCollateral = _useAsCollateral;
+    }
+
+    function getReserveAvailableLiquidity(address _reserve) public view returns(uint256) {
+        uint256 balance = 0;
+
+        if(_reserve == EthAddressLib.ethAddress()) {
+            balance = address(this).balance;
+        } else {
+            balance = IERC20(_reserve).balanceOf(address(this));
+        }
+        return balance;
+    }
+
+    function getUserBorrowBalance(address _reserve, address _user)
+        public
+        view
+        returns(uint256, uint256, uint256)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        if(user.principalBorrowBalance == 0) {
+            return (0, 0, 0);
+        }
+        
+        uint256 principal = user.principalBorrowBalance;
+        uint256 compoundedBalance = CoreLibrary.getCompoundedBorrowBalance(user, reserves[_reserve]);
+
+        return (principal, compoundedBalance, compoundedBalance.sub(principal));
+    }
+
+    function getUserCurrentBorrowRateMode(address _reserve, address _user)
+        public
+        view
+        returns(CoreLibrary.InterestRateMode)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        if(user.principalBorrowBalance == 0) {
+            return CoreLibrary.InterestRateMode.NONE;
+        }
+
+        return user.stableBorrowRate > 0 ? CoreLibrary.InterestRateMode.STABLE : CoreLibrary.InterestRateMode.VARIABLE;
+    }
+
+    function getUserCurrentBorrowRate(address _reserve, address _user) 
+        internal
+        view
+        returns(uint256)
+    {
+        CoreLibrary.InterestRateMode rateMode = getUserCurrentBorrowRateMode(_reserve, _user);
+        if(rateMode == CoreLibrary.InterestRateMode.NONE) {
+            return 0;
+        }
+        return 
+            rateMode == CoreLibrary.InterestRateMode.STABLE
+            ? usersReserveData[_user][_reserve].stableBorrowRate
+            : reserves[_reserve].currentVariableBorrowRate;
+    }
+
+    function updateReserveStateOnBorrowInternal(
+        address _reserve,
+        address _user,
+        uint256 _principalBorrowBalance,
+        uint256 _balanceIncrease,
+        uint256 _amountBorrowed,
+        CoreLibrary.InterestRateMode _rateMode
+    ) internal {
+        reserves[_reserve].updateCumulativeIndexes();
+
+        updateReserveTotalBorrowsByRateModeInternal(
+            _reserve,
+            _user,
+            _principalBorrowBalance,
+            _balanceIncrease,
+            _amountBorrowed,
+            _rateMode
+        );
+    }
+
+    function updateUserStateOnBorrowInternal(
+        address _reserve,
+        address _user,
+        uint256 _amountBorrowed,
+        uint256 _balanceIncrease,
+        uint256 _fee,
+        CoreLibrary.InterestRateMode _rateMode
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        if(_rateMode == CoreLibrary.InterestRateMode.STABLE) {
+            user.stableBorrowRate = reserve.currentStableBorrowRate;
+            user.lastVariableBorrowCumulativeIndex = 0;
+        } else if (_rateMode == CoreLibrary.InterestRateMode.VARIABLE) {
+            user.stableBorrowRate = 0;
+            user.lastVariableBorrowCumulativeIndex = reserve.lastVariableBorrowCumulativeIndex;
+        } else {
+            revert("Invalid borrow rate mode");
+        }
+
+        user.principalBorrowBalance = user.principalBorrowBalance.add(_amountBorrowed).add(_balanceIncrease);
+
+        user.originationFee = user.originationFee.add(_fee);
+
+        user.lastUpdateTimestamp = uint40(block.timestamp);
+    }
+
+    function updateReserveStateOnRepayInternal(
+        address _reserve,
+        address _user,
+        uint256 _paybackAmountMinusFees,
+        uint256 _balanceIncrease
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        CoreLibrary.InterestRateMode borrowRateMode = getUserCurrentBorrowRateMode(_reserve, _user);
+
+        reserves[_reserve].updateCumulativeIndexes();
+
+        if(borrowRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            reserve.increaseTotalBorrowsStableAndUpdateAverageRate(
+                _balanceIncrease,
+                user.stableBorrowRate
+            );
+            reserve.decreaseTotalBorrowsStableAndUpdateAverageRate(
+                _paybackAmountMinusFees,
+                user.stableBorrowRate
+            );
+        } else {
+            reserve.increaseTotalBorrowsVariable(_balanceIncrease);
+            reserve.decreaseTotalBorrowsVariable(_paybackAmountMinusFees);
+        }
+    }
+
+    function updateUserStateOnRepayInternal(
+        address _reserve,
+        address _user,
+        uint256 _paybackAmountMinusFees,
+        uint256 _originationFeeRepaid,
+        uint256 _balanceIncrease,
+        bool _repaidWholeLoan
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        user.principalBorrowBalance = user.principalBorrowBalance.add(_balanceIncrease).sub(_paybackAmountMinusFees);
+        user.lastVariableBorrowCumulativeIndex = reserve.lastVariableBorrowCumulativeIndex;
+
+        if(_repaidWholeLoan) {
+            user.stableBorrowRate = 0;
+            user.lastVariableBorrowCumulativeIndex = 0;
+        }
+        user.originationFee = user.originationFee.sub(_originationFeeRepaid);
+
+        user.lastUpdateTimestamp = uint40(block.timestamp);
+    }
+
+    function updateReserveStateOnSwapRateInternal(
+        address _reserve,
+        address _user,
+        uint256 _principalBorrowBalance,
+        uint256 _compoundedBorrowBalance,
+        CoreLibrary.InterestRateMode _currentRateMode
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        reserve.updateCumulativeIndexes();
+
+        if(_currentRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            uint256 userCurrentStableRate = user.stableBorrowRate;
+
+            reserve.decreaseTotalBorrowsStableAndUpdateAverageRate(
+                _principalBorrowBalance,
+                userCurrentStableRate
+            );
+            reserve.increaseTotalBorrowsVariable(_compoundedBorrowBalance);
+        } else if(_currentRateMode == CoreLibrary.InterestRateMode.VARIABLE){
+            uint256 currentStableRate = reserve.currentStableBorrowRate;
+            reserve.decreaseTotalBorrowsVariable(_principalBorrowBalance);
+            reserve.increaseTotalBorrowsStableAndUpdateAverageRate(
+                _compoundedBorrowBalance,
+                currentStableRate
+            );
+        } else {
+            revert("Invalid rate mode received");
+        }
+    }
+
+    function updateUserStateOnSwapRateInternal(
+        address _reserve,
+        address _user,
+        uint256 _balanceIncrease,
+        CoreLibrary.InterestRateMode _currentRateMode
+    ) internal returns(CoreLibrary.InterestRateMode) {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        CoreLibrary.InterestRateMode newMode = CoreLibrary.InterestRateMode.NONE;
+
+        if(_currentRateMode == CoreLibrary.InterestRateMode.VARIABLE) {
+            newMode = CoreLibrary.InterestRateMode.STABLE;
+            user.stableBorrowRate = reserve.currentStableBorrowRate;
+            user.lastVariableBorrowCumulativeIndex = 0;
+        } else if (_currentRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            newMode = CoreLibrary.InterestRateMode.VARIABLE;
+            user.stableBorrowRate = 0;
+            user.lastVariableBorrowCumulativeIndex = reserve.lastVariableBorrowCumulativeIndex;
+        } else {
+            revert("Invalid interest rate mode received");
+        }
+
+        user.principalBorrowBalance = user.principalBorrowBalance.add(_balanceIncrease);
+        user.lastUpdateTimestamp = uint40(block.timestamp);
+
+        return newMode;
+    }
+
+    function updatePrincipalReserveStateOnLiquidationInternal(
+        address _principalReserve,
+        address _user,
+        uint256 _amountToLiquidate,
+        uint256 _balanceIncrease
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_principalReserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_principalReserve];
+
+        reserve.updateCumulativeIndexes();
+
+        CoreLibrary.InterestRateMode borrowRateMode = getUserCurrentBorrowRateMode(
+            _principalReserve,
+            _user
+        );
+
+        if(borrowRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            reserve.increaseTotalBorrowsStableAndUpdateAverageRate(_balanceIncrease, user.stableBorrowRate);
+
+            reserve.decreaseTotalBorrowsStableAndUpdateAverageRate(_amountToLiquidate, user.stableBorrowRate);
+        } else {
+            reserve.increaseTotalBorrowsVariable(_balanceIncrease);
+
+            reserve.decreaseTotalBorrowsVariable(_amountToLiquidate);
+        }
+    }
+
+    function updateCollateralReserveStateOnLiquidationInternal(
+        address _collateralReserve
+    ) internal {
+        reserves[_collateralReserve].updateCumulativeIndexes();
+    }
+
+    function updateUserStateOnLiquidationInternal(
+        address _reserve,
+        address _user,
+        uint256 _amountToLiquidate,
+        uint256 _feeLiquidate,
+        uint256 _balanceIncrease
+    ) internal {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        user.principalBorrowBalance = user.principalBorrowBalance.add(_balanceIncrease).sub(_amountToLiquidate);
+
+        if(getUserCurrentBorrowRateMode(_reserve, _user) == CoreLibrary.InterestRateMode.VARIABLE) {
+            user.lastVariableBorrowCumulativeIndex = reserve.lastVariableBorrowCumulativeIndex;
+        }
+
+        if(_feeLiquidate > 0) {
+            user.originationFee = user.originationFee.sub(_feeLiquidate);
+        }
+
+        user.lastUpdateTimestamp = uint40(block.timestamp);
+    }
+
+    function updateReserveTotalBorrowsByRateModeInternal(
+        address _reserve,
+        address _user,
+        uint256 _principalBalance,
+        uint256 _balanceIncrease,
+        uint256 _amountBorrowed,
+        CoreLibrary.InterestRateMode _newBorrowRateMode
+    ) internal {
+        CoreLibrary.InterestRateMode previousRateMode = getUserCurrentBorrowRateMode(_reserve, _user);
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        if(previousRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+            reserve.decreaseTotalBorrowsStableAndUpdateAverageRate(
+                _principalBalance,
+                user.stableBorrowRate
+            );
+        } else if (previousRateMode == CoreLibrary.InterestRateMode.VARIABLE) {
+            reserve.decreaseTotalBorrowsVariable(_principalBalance);
+        }
+
+        uint256 newPrincipalAmount = _principalBalance.add(_balanceIncrease).add(_amountBorrowed);
+        if(_newBorrowRateMode == CoreLibrary.InterestRateMode.STABLE) {
+            reserve.increaseTotalBorrowsStableAndUpdateAverageRate(
+                newPrincipalAmount,
+                reserve.currentStableBorrowRate
+            );
+        } else if (_newBorrowRateMode == CoreLibrary.InterestRateMode.VARIABLE) {
+            reserve.increaseTotalBorrowsVariable(newPrincipalAmount);
+        } else {
+            revert("Invalid new borrow rate mode");
+        }
+    }
+
+    function updateReserveInterestRatesAndTimestampInternal(
+        address _reserve,
+        uint256 _liquidityAdded,
+        uint256 _liquidityTaken
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        (
+            uint256 newLiquidityRate,
+            uint256 newStableRate,
+            uint256 newVariableRate
+        ) = IReserveInterestRateStrategy(
+            reserve.interestRateStrategyAddress
+        )
+        .calculateInterestRates(
+            _reserve,
+            getReserveAvailableLiquidity(_reserve).add(_liquidityAdded).sub(_liquidityTaken),
+            reserve.totalBorrowsStable,
+            reserve.totalBorrowsVariable,
+            reserve.currentAverageStableBorrowRate
+        );
+        
+        reserve.currentLiquidityRate = newLiquidityRate;
+        reserve.currentStableBorrowRate = newStableRate;
+        reserve.currentVariableBorrowRate = newVariableRate;
+
+        reserve.lastUpdateTimestamp = uint40(block.timestamp);
+
+        emit ReserveUpdate(
+            _reserve,
+            newLiquidityRate,
+            newStableRate,
+            newVariableRate,
+            reserve.lastLiquidityCumulativeIndex,
+            reserve.lastVariableBorrowCumulativeIndex
+        );
+    }
+
+    function refreshConfigInternal() internal {
+        lendingPoolAddress = addressesProvider.getLendingPool();
+    }
+}
