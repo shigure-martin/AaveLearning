@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-17 15:59:11
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-17 17:04:04
+ * @LastEditTime: 2023-02-17 17:27:04
  */
 //SPDX-License-Identifier:MIT
 
@@ -61,7 +61,7 @@ contract DefaultReserveInterestRateStrategy is IReserveInterestRateStrategy {
         uint256 _variableRateSlope2,
         uint256 _stableRateSlope1,
         uint256 _stableRateSlope2
-    ) public {
+    ) {
         addressesProvider = _provider;
         baseVariableBorrowRate = _baseVariableBorrowRate;
         variableRateSlope1 = _variableRateSlope1;
