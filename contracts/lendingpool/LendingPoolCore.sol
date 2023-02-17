@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:58:30
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-17 17:06:08
+ * @LastEditTime: 2023-02-17 17:44:07
  */
 //SPDX-License-Identifier:MIT
 
@@ -451,7 +451,97 @@ contract LendingPoolCore {
         return reserve.currentVariableBorrowRate;
     }
 
-    //@todo: getReserveCurrentStableBorrowRate()
+    function getReserveCurrentStableBorrowRate(address _reserve) public view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        ILendingRateOracle oracle = ILendingRateOracle(addressesProvider.getLendingRateOracle());
+
+        if(reserve.currentStableBorrowRate == 0) {
+            return oracle.getMarketBorrowRate(_reserve);
+        }
+
+        return reserve.currentStableBorrowRate;
+    }
+
+    function getReserveCurrentAverageStableBorrowRate(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.currentAverageStableBorrowRate;
+    }
+
+    function getReserveCurrentLiquidityRate(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.currentLiquidityRate;
+    }
+
+    function getReserveLiquidityCumulativeIndex(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.lastLiquidityCumulativeIndex;
+    }
+
+    function getReserveVariableBorrowsCumulativeIndex(address _reserve)
+        external
+        view
+        returns (uint256)
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.lastVariableBorrowCumulativeIndex;
+    }
+
+    function getReserveConfiguration(address _reserve)
+        external
+        view 
+        returns(
+            uint256, uint256, uint256, bool
+        )
+    {
+        uint256 decimals;
+        uint256 baseLTVasCollateral;
+        uint256 liquidationThreshold;
+        bool usageAsCollateralEnabled;
+
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        decimals = reserve.decimals;
+        baseLTVasCollateral = reserve.baseLTVasCollateral;
+        liquidationThreshold = reserve.liquidationThreshold;
+        usageAsCollateralEnabled = reserve.usageAsCollateralEnabled;
+        
+        return (decimals, baseLTVasCollateral, liquidationThreshold, usageAsCollateralEnabled);
+    }
+
+    function getReserveDecimals(address _reserve) external view returns (uint256) {
+        return reserves[_reserve].decimals;
+    }
+
+    function isReserveBorrowingEnabled(address _reserve) external view returns (bool) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.borrowingEnabled;
+    }
+
+    function isReserveUsageAsCollateralEnabled(address _reserve) external view returns (bool) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.usageAsCollateralEnabled;
+    }
+    
+    function getReserveIsStableBorrowRateEnabled(address _reserve) external view returns (bool) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.isStableBorrowRateEnabled;
+    }
+
+    function getReserveIsActive(address _reserve) external view returns (bool) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.isActive;
+    }
+
+    function getReserveIsFreezed(address _reserve) external view returns (bool) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.isFreezed;
+    }
+
+    function getReserveLastUpdate(address _reserve) external view returns (uint40 timestamp) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        timestamp = reserve.lastUpdateTimestamp;
+    }
+
+    //@todo: getReserveUtilizationRate()
 
     function getUserBorrowBalance(address _reserve, address _user)
         public
