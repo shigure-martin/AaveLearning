@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:58:30
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-17 15:22:10
+ * @LastEditTime: 2023-02-17 17:06:08
  */
 //SPDX-License-Identifier:MIT
 
@@ -385,7 +385,14 @@ contract LendingPoolCore {
         return reserve.interestRateStrategyAddress;
     }
 
-    
+    function getReserveATokenAddress(address _reserve)
+        public 
+        view
+        returns (address)
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.aTokenAddress;
+    }
 
     function getReserveAvailableLiquidity(address _reserve) public view returns(uint256) {
         uint256 balance = 0;
@@ -397,6 +404,54 @@ contract LendingPoolCore {
         }
         return balance;
     }
+
+    function getReserveTotalLiquidity(address _reserve) public view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return getReserveAvailableLiquidity(_reserve).add(reserve.getTotalBorrows());
+    }
+
+    function getReserveNormalizedIncome(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.getNormalizedIncome();
+    }
+
+    function getReserveTotalBorrows(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.getTotalBorrows();
+    }
+
+    function getReserveTotalBorrowsStable(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.totalBorrowsStable;
+    }
+
+    function getReserveTotalBorrowsVariable(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.totalBorrowsVariable;
+    }
+
+    function getReserveLiquidationThreshold(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.liquidationThreshold;
+    }
+
+    function getReserveLiquidationBonus(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.liquidationBonus;
+    }
+
+    function getReserveCurrentVariableBorrowRate(address _reserve) external view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        if(reserve.currentVariableBorrowRate == 0) {
+            return 
+                IReserveInterestRateStrategy(reserve.interestRateStrategyAddress)
+                .getBaseVariableBorrowRate();
+        }
+        return reserve.currentVariableBorrowRate;
+    }
+
+    //@todo: getReserveCurrentStableBorrowRate()
 
     function getUserBorrowBalance(address _reserve, address _user)
         public
