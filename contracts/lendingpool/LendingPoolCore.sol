@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:58:30
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-16 17:50:37
+ * @LastEditTime: 2023-02-17 15:22:10
  */
 //SPDX-License-Identifier:MIT
 
@@ -77,7 +77,7 @@ contract LendingPoolCore {
         updateReserveInterestRatesAndTimestampInternal(_reserve, _amount, 0);
 
         if(_isFirstDeposit) {
-            setUserUseReserveCollateral(_reserve, _user, true);
+            setUserUseReserveAsCollateral(_reserve, _user, true);
         }
     }
 
@@ -91,7 +91,7 @@ contract LendingPoolCore {
         updateReserveInterestRatesAndTimestampInternal(_reserve, 0, _amountRedeemed);
 
         if(_userRedeemedEverything) {
-            setUserUseReserveCollateral(_reserve, _user, false);
+            setUserUseReserveAsCollateral(_reserve, _user, false);
         }
     }
 
@@ -230,15 +230,162 @@ contract LendingPoolCore {
         }
     }
 
-    //todo:updateStateOnRebalance()
+    function updateStateOnRebalance(address _reserve, address _user, uint256 _balanceIncrease)
+        external
+        onlyLendingPool
+        returns (uint256)
+    {
+        updateReserveStateOnRebalanceInternal(_reserve, _user, _balanceIncrease);
 
-    function setUserUseReserveCollateral(address _reserve, address _user, bool _useAsCollateral)
+        updateUserStateOnRebalanceInternal(_reserve, _user, _balanceIncrease);
+        updateReserveInterestRatesAndTimestampInternal(_reserve, 0, 0);
+
+        return usersReserveData[_user][_reserve].stableBorrowRate;
+    }
+
+    function setUserUseReserveAsCollateral(address _reserve, address _user, bool _useAsCollateral)
         public
         onlyLendingPool
     {
         CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
         user.useAsCollateral = _useAsCollateral;
     }
+
+    //@notice ETH/token transfer function
+    
+    //only contracts can send ETH to the core
+    fallback() external payable {
+        require(msg.sender.code.length > 0, "Only contracts can send ether to the Lending pool core!");
+    }
+
+    //I'm not sure if it's necessary
+    receive() external payable {}
+
+    function transferToUser(address _reserve, address payable _user, uint256 _amount) 
+        external
+        onlyLendingPool
+    {
+        if(_reserve != EthAddressLib.ethAddress()) {
+            ERC20(_reserve).safeTransfer(_user, _amount);
+        } else {
+            (bool result, ) = _user.call{value: _amount, gas: 50000}("");
+            require(result, "Transfer of ETH failed");
+        }
+    }
+
+    function transferToFeeCollectionAddress(
+        address _token,
+        address _user,
+        uint256 _amount,
+        address _destination
+    ) external payable onlyLendingPool {
+        address payable feeAddress = payable(_destination);
+
+        if(_token != EthAddressLib.ethAddress()) {
+            require(msg.value == 0, "User is sending ETH along with the ERC20 transfer. Check the value attribute of the transaction!");
+            ERC20(_token).safeTransferFrom(_user, feeAddress, _amount);
+        } else {
+            require(msg.value >= _amount, "The amount and the value sent to deposit do not match");
+
+            (bool result, ) = feeAddress.call{value: _amount, gas: 50000}("");
+            require(result, "Transfer of ETH failed");
+        }
+    }
+
+    function liquidateFee(
+        address _token,
+        uint256 _amount,
+        address _destination
+    ) external payable onlyLendingPool {
+        address payable feeAddress = payable(_destination);
+        require(msg.value == 0, "Fee liquidation does not require any transfer of value");
+
+        if(_token != EthAddressLib.ethAddress()) {
+            ERC20(_token).safeTransfer(feeAddress, _amount);
+        } else {
+            (bool result, ) = feeAddress.call{value: _amount, gas: 50000}("");
+            require(result, "Transfer of ETH failed");
+        }
+    }
+
+    function transferToReserve(
+        address _reserve,
+        address payable _user,
+        uint256 _amount
+    ) external payable onlyLendingPool {
+        if(_reserve != EthAddressLib.ethAddress()) {
+            require(msg.value == 0, "User is sending ETH along with the ERC20 transfer!");
+            ERC20(_reserve).safeTransferFrom(_user, address(this), _amount);
+        } else {
+            require(msg.value >= _amount, "The amount and the value sent to deposit do not match");
+
+            if(msg.value > _amount) {
+                uint256 excessAmount = msg.value.sub(_amount);
+
+                (bool result, ) = _user.call{value: excessAmount, gas:50000}("");
+                require(result, "Transfer of ETH failed");
+            }
+        }
+    }
+    //@notice data access function
+
+    //return user's balance, fee accrued, reserve enabled/disabled as collateral
+
+    function getUserBasicReserveData(address _reserve, address _user)
+        external view returns (uint256, uint256, uint256, bool)
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        uint256 underlyingBalance = getUserUnderlyingAssetBalance(_reserve, _user);
+
+        if(user.principalBorrowBalance == 0) {
+            return (underlyingBalance, 0, 0, user.useAsCollateral);
+        }
+
+        return (
+            underlyingBalance,
+            user.getCompoundedBorrowBalance(reserve),
+            user.originationFee,
+            user.useAsCollateral
+        );
+    }
+
+    function isUserAllowedToBorrowAtStable(address _reserve, address _user, uint256 _amount)
+        external
+        view
+        returns (bool)
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        if(!reserve.isStableBorrowRateEnabled) {
+            return false;
+        }
+
+        return 
+            !user.useAsCollateral ||
+            !reserve.usageAsCollateralEnabled ||
+            _amount > getUserUnderlyingAssetBalance(_reserve, _user);
+    }
+
+    function getUserUnderlyingAssetBalance(address _reserve, address _user)
+        public 
+        view
+        returns (uint256)
+    {
+        AToken aToken = AToken(reserves[_reserve].aTokenAddress);
+        return aToken.balanceOf(_user);
+    }
+
+    function getReserveInterestRateStrategyAddress(address _reserve)
+        public view returns (address)
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        return reserve.interestRateStrategyAddress;
+    }
+
+    
 
     function getReserveAvailableLiquidity(address _reserve) public view returns(uint256) {
         uint256 balance = 0;
@@ -508,6 +655,36 @@ contract LendingPoolCore {
         if(_feeLiquidate > 0) {
             user.originationFee = user.originationFee.sub(_feeLiquidate);
         }
+
+        user.lastUpdateTimestamp = uint40(block.timestamp);
+    }
+
+    function updateReserveStateOnRebalanceInternal(
+        address _reserve,
+        address _user,
+        uint256 _balanceIncrease
+    ) internal {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+
+        reserve.updateCumulativeIndexes();
+
+        reserve.increaseTotalBorrowsStableAndUpdateAverageRate(
+            _balanceIncrease,
+            user.stableBorrowRate
+        );
+    }
+
+    function updateUserStateOnRebalanceInternal(
+        address _reserve,
+        address _user,
+        uint256 _balanceIncrease
+    ) internal {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        user.principalBorrowBalance = user.principalBorrowBalance.add(_balanceIncrease);
+        user.stableBorrowRate = reserve.currentStableBorrowRate;
 
         user.lastUpdateTimestamp = uint40(block.timestamp);
     }
