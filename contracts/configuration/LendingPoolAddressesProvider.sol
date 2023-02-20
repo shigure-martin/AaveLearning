@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-15 13:48:40
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-17 16:35:59
+ * @LastEditTime: 2023-02-20 15:03:29
  */
 //SPDX-License-Identifier:MIT
 pragma solidity ^0.8.9;
@@ -20,6 +20,8 @@ contract LendingPoolAddressesProvider is Ownable, AddressStorage {
     bytes32 private constant LENDING_POOL_CORE = "LENDING_POOL_CORE";
     bytes32 private constant LENDING_POOL_CONFIGURATOR = "LENDING_POOL_CONFIGURATOR";
     bytes32 private constant LENDING_RATE_ORACLE = "LENDING_RATE_ORACLE";
+    bytes32 private constant PRICE_ORACLE = "PRICE_ORACLE";
+    bytes32 private constant FEE_PROVIDER = "FEE_PROVIDER";
 
     function getLendingPool() public view returns(address) {
         return getAddress(LENDING_POOL);
@@ -37,4 +39,11 @@ contract LendingPoolAddressesProvider is Ownable, AddressStorage {
         return getAddress(LENDING_RATE_ORACLE);
     }
 
+    function getPriceOracle() public view returns (address) {
+        return getAddress(PRICE_ORACLE);
+    }
+
+    function getFeeProvider() public view returns (address) {
+        return getAddress(FEE_PROVIDER);
+    }
 }
