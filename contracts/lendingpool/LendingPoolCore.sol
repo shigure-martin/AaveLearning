@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:58:30
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-17 17:44:07
+ * @LastEditTime: 2023-02-20 10:38:48
  */
 //SPDX-License-Identifier:MIT
 
@@ -109,7 +109,7 @@ contract LendingPoolCore {
             uint256 principalBorrowBalance,
             ,
             uint256 balanceIncrease
-        ) = getUserBorrowBalance(_reserve, _user);
+        ) = getUserBorrowBalances(_reserve, _user);
 
         
         updateReserveStateOnBorrowInternal(
@@ -415,7 +415,7 @@ contract LendingPoolCore {
         return reserve.getNormalizedIncome();
     }
 
-    function getReserveTotalBorrows(address _reserve) external view returns (uint256) {
+    function getReserveTotalBorrows(address _reserve) public view returns (uint256) {
         CoreLibrary.ReserveData storage reserve = reserves[_reserve];
         return reserve.getTotalBorrows();
     }
@@ -541,22 +541,36 @@ contract LendingPoolCore {
         timestamp = reserve.lastUpdateTimestamp;
     }
 
-    //@todo: getReserveUtilizationRate()
+    function getReserveUtilizationRate(address _reserve) public view returns (uint256) {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
 
-    function getUserBorrowBalance(address _reserve, address _user)
-        public
+        uint256 totalBorrows = reserve.getTotalBorrows();
+
+        if(totalBorrows == 0) {
+            return 0;
+        }
+
+        uint256 availableLiquidity = getReserveAvailableLiquidity(_reserve);
+
+        return totalBorrows.rayDiv(availableLiquidity.add(totalBorrows));
+    } 
+
+    function getReserves() external view returns (address[] memory) {
+        return reservesList;
+    }
+
+    function isUserUseReserveAsCollateralEnabled(address _reserve, address _user) external view returns(bool) {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        return user.useAsCollateral;
+    }
+
+    function getUserOriginationFee(address _reserve, address _user) 
+        external 
         view
-        returns(uint256, uint256, uint256)
+        returns(uint256)
     {
         CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
-        if(user.principalBorrowBalance == 0) {
-            return (0, 0, 0);
-        }
-        
-        uint256 principal = user.principalBorrowBalance;
-        uint256 compoundedBalance = CoreLibrary.getCompoundedBorrowBalance(user, reserves[_reserve]);
-
-        return (principal, compoundedBalance, compoundedBalance.sub(principal));
+        return user.originationFee;
     }
 
     function getUserCurrentBorrowRateMode(address _reserve, address _user)
@@ -588,6 +602,192 @@ contract LendingPoolCore {
             : reserves[_reserve].currentVariableBorrowRate;
     }
 
+
+    function getUserCurrentStableBorrowRate(address _reserve, address _user)
+        external
+        view
+        returns(uint256)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        return user.stableBorrowRate;
+    }
+
+    function getUserBorrowBalances(address _reserve, address _user)
+        public
+        view
+        returns(uint256, uint256, uint256)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        if(user.principalBorrowBalance == 0) {
+            return (0, 0, 0);
+        }
+        
+        uint256 principal = user.principalBorrowBalance;
+        uint256 compoundedBalance = CoreLibrary.getCompoundedBorrowBalance(user, reserves[_reserve]);
+
+        return (principal, compoundedBalance, compoundedBalance.sub(principal));
+    }
+
+    function getUserVariableBorrowCumulativeIndex(address _reserve, address _user)
+        external
+        view
+        returns(uint256)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        return user.lastVariableBorrowCumulativeIndex;
+    }
+
+    function getUserLastUpdate(address _reserve, address _user)
+        external 
+        view 
+        returns (uint256)
+    {
+        CoreLibrary.UserReserveData storage user = usersReserveData[_user][_reserve];
+        return uint256(user.lastUpdateTimestamp); //@note: different from Aave
+    }
+
+    function refreshConfiguration() external onlyLendingPoolConfigurator {
+        refreshConfigInternal();
+    }
+
+    function initReserve(address _reserve, address _aTokenAddress, uint256 _decimals, address _interestRateStrategyAddress)
+        external
+        onlyLendingPoolConfigurator
+    {
+        reserves[_reserve].init(_aTokenAddress, _decimals, _interestRateStrategyAddress);
+        addReserveToListInternal(_reserve);
+    }
+
+    function removeLastAddedReserve(address _reserveToRemove) external onlyLendingPoolConfigurator {
+        address lastReserve = reservesList[reservesList.length - 1];
+
+        require(lastReserve == _reserveToRemove, "Reserve being removed is different than the reserve requrest");
+
+        require(getReserveTotalBorrows(lastReserve) == 0, "Cannot remove a reserve with liquidity deposited");
+
+        reserves[lastReserve].isActive = false;
+        reserves[lastReserve].aTokenAddress = address(0);
+        reserves[lastReserve].decimals = 0;
+        reserves[lastReserve].lastLiquidityCumulativeIndex = 0;
+        reserves[lastReserve].lastVariableBorrowCumulativeIndex = 0;
+        reserves[lastReserve].borrowingEnabled = false;
+        reserves[lastReserve].usageAsCollateralEnabled = false;
+        reserves[lastReserve].baseLTVasCollateral = 0;
+        reserves[lastReserve].liquidationThreshold = 0;
+        reserves[lastReserve].liquidationBonus = 0;
+        reserves[lastReserve].interestRateStrategyAddress = address(0);
+
+        reservesList.pop();
+    }
+
+    function setReserveInterestRateStrategyAddress(address _reserve, address _rateStrategyAddress)
+        external
+        onlyLendingPoolConfigurator
+    {
+        reserves[_reserve].interestRateStrategyAddress = _rateStrategyAddress;
+    }
+
+    function enableBorrowingOnReserve(address _reserve, bool _stableBorrowRateEnabled)
+        external
+        onlyLendingPoolConfigurator
+    {
+        reserves[_reserve].enableBorrowing(_stableBorrowRateEnabled);
+    }
+
+    function disableBorrowingOnReserve(address _reserve)
+        external
+        onlyLendingPoolConfigurator
+    {
+        reserves[_reserve].disableBorrowing();
+    }
+
+    function enableReserveAsCollateral(
+        address _reserve,
+        uint256 _baseLTVasCollateral,
+        uint256 _liquidationThreshold,
+        uint256 _liquidationBonus
+    ) external onlyLendingPoolConfigurator {
+        reserves[_reserve].enableAsCollateral(
+            _baseLTVasCollateral,
+            _liquidationThreshold,
+            _liquidationBonus
+        );
+    }
+
+    function disableReserveAsCollateral(address _reserve) external onlyLendingPoolConfigurator {
+        reserves[_reserve].disableAsCollateral();
+    }
+
+    function enableReserveStableBorrowRate(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.isStableBorrowRateEnabled = true;
+    }
+
+    function disableReserveStableBorrowRate(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.isStableBorrowRateEnabled = false;
+    }
+
+    function activateReserve(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+
+        require(
+            reserve.lastLiquidityCumulativeIndex > 0 &&
+                reserve.lastVariableBorrowCumulativeIndex > 0,
+            "Reserve has not been initialized yet"
+        );
+        reserve.isActive = true;
+    }
+
+    function deactivateReserve(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.isActive = false;
+    }
+
+    function freezeReserve(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.isFreezed = true;
+    }
+
+    function unfreezeReserve(address _reserve) external onlyLendingPoolConfigurator {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.isFreezed = false;
+    }
+
+    function setReserveBaseLTVasCollateral(address _reserve, uint256 _ltv)
+        external
+        onlyLendingPoolConfigurator
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.baseLTVasCollateral = _ltv;
+    }
+
+    function setReserveLiquidationThreshold(address _reserve, uint256 _threshold)
+        external
+        onlyLendingPoolConfigurator
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.liquidationThreshold = _threshold;
+    }
+
+    function setReserveLiquidationBonus(address _reserve, uint256 _bonus)
+        external
+        onlyLendingPoolConfigurator
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.liquidationBonus = _bonus;
+    }
+
+    function setReserveDecimals(address _reserve, uint256 _decimals)
+        external
+        onlyLendingPoolConfigurator
+    {
+        CoreLibrary.ReserveData storage reserve = reserves[_reserve];
+        reserve.decimals = _decimals;
+    }
+
+    //@notice: internal functions
+    
     function updateReserveStateOnBorrowInternal(
         address _reserve,
         address _user,
@@ -905,7 +1105,19 @@ contract LendingPoolCore {
         );
     }
 
+    //@todo: transferFlashLoanProtocalFeeInternal()
+
     function refreshConfigInternal() internal {
         lendingPoolAddress = addressesProvider.getLendingPool();
+    }
+
+    function addReserveToListInternal(address _reserve) internal {
+        bool reserveAlreadyAdded = false;
+        for(uint256 i = 0; i < reservesList.length; i++) {
+            if(reservesList[i] == _reserve) {
+                reserveAlreadyAdded = true;
+            }
+        }
+        if(!reserveAlreadyAdded) reservesList.push(_reserve);
     }
 }
