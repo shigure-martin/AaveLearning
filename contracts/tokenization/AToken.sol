@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:18:59
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-21 14:07:43
+ * @LastEditTime: 2023-02-21 16:48:24
  */
 //SPDX-License-Identifier:MIT
 
@@ -114,36 +114,6 @@ contract AToken is ERC20 {
         underlyingAssetAddress = _underlyingAsset;
     }
 
-    function balanceOf(address _user) public override view returns (uint256) {
-
-        uint256 currentPrincipalBalance = super.balanceOf(_user);
-
-        uint256 redirectedBalance = redirectedBalances[_user];
-
-        if(currentPrincipalBalance == 0 && redirectedBalance == 0) {
-            return 0;
-        }
-
-        if(interestRedirectionAddresses[_user] == address(0)) {
-            //accruing for himself means that both the principal balance and
-            //the redirected balance partecipate in the interest
-            return calculateCumulatedBalanceInternal(
-                _user,
-                currentPrincipalBalance.add(redirectedBalance)
-            ).sub(redirectedBalance);
-        } else {
-            //if the user redirected the interest, then only the redirected
-            //balance generates interest. In that case, the interest generated
-            //by the redirected balance is added to the current principal balance.
-            return currentPrincipalBalance.add(
-                calculateCumulatedBalanceInternal(
-                    _user,
-                    redirectedBalance
-                ).sub(redirectedBalance)
-            );
-        }
-    }
-
     function _transfer(address _from, address _to, uint256 _amount) 
         internal 
         override 
@@ -175,8 +145,158 @@ contract AToken is ERC20 {
 
     //@todo:redeem
 
+    function redeem(uint256 _amount) external {
+        
+        require(_amount > 0, "Amount to redeem needs to be greater than zero");
+
+        (
+            ,
+            uint256 currentBalance,
+            uint256 balanceIncrease,
+            uint256 index 
+        ) = cumulateBalanceInternal(msg.sender);
+
+        uint256 amountToRedeem = _amount;
+
+        if(_amount == UINT_MAX_VALUE) {
+            amountToRedeem = currentBalance;
+        }
+
+        require(amountToRedeem <= currentBalance, "User cannot redeem more than the available balance");
+
+        require(isTransferAllowed(msg.sender, amountToRedeem), "Transfer cannot be allowed");
+
+        //if the user is redirecting his interest towards someone else,
+        //we update the redirected balance of the redirection address by adding the accrued interest,
+        //and removing the amount to redeem
+        updateRedirectedBalanceOfRedirectionAddressInternal(msg.sender, balanceIncrease, amountToRedeem);
+        
+        _burn(msg.sender, amountToRedeem);
+
+        bool userIndexReset = false;
+
+        if(currentBalance.sub(amountToRedeem) == 0) {
+            userIndexReset = resetDataOnZeroBalanceInternal(msg.sender);
+        }
+
+        pool.redeemUnderlying();
+
+        emit Redeem(msg.sender, amountToRedeem, balanceIncrease, userIndexReset ? 0 : index);
+    }
+
+    function mintOnDeposit(address _account, uint256 _amount) external onlyLendingPool {
+
+        (
+            ,
+            ,
+            uint256 balanceIncrease,
+            uint256 index 
+        ) = cumulateBalanceInternal(_account);
+        
+        //if the user is redirecting his interest towards someone else,
+        //we update the redirected balance of the redirection address by adding the accrued interest
+        //and the amount deposited
+        updateRedirectedBalanceOfRedirectionAddressInternal(_account, balanceIncrease.add(_amount), 0);
+        
+        _mint(_account, _amount);
+
+        emit MintOnDeposit(_account, _amount, balanceIncrease, index);
+    }
+
+    function burnOnLiquidation(address _account, uint256 _value) external onlyLendingPool {
+
+        (
+            ,
+            uint256 accountBalance,
+            uint256 balanceIncrease,
+            uint256 index
+        ) = cumulateBalanceInternal(_account);
+
+        //adds the accrued interest and substracts the burned amount to
+        //the redirected balance
+        updateRedirectedBalanceOfRedirectionAddressInternal(_account, balanceIncrease, _value);
+
+        _burn(_account, _value);
+
+        bool userIndexReset = false;
+
+        if(accountBalance.sub(_value) == 0) {
+            userIndexReset = resetDataOnZeroBalanceInternal(_account);
+        }
+
+        emit BurnOnLiquidation(_account, _value, balanceIncrease, userIndexReset ? 0 : index);
+    }
+
+    //transferOnLiquidation
+    function transferOnLiquidation(address _from, address _to, uint256 _value) external onlyLendingPool {
+        executeTransferInternal(_from, _to, _value);
+    }
+
+    function balanceOf(address _user) public override view returns (uint256) {
+
+        uint256 currentPrincipalBalance = super.balanceOf(_user);
+        //balance redirected by other users to _user for interest rate accrual
+        uint256 redirectedBalance = redirectedBalances[_user];
+
+        if(currentPrincipalBalance == 0 && redirectedBalance == 0) {
+            return 0;
+        }
+
+        //if the _user is not redirecting the interest to anybody, accrues
+        //the interest for himself
+
+        if(interestRedirectionAddresses[_user] == address(0)) {
+            //accruing for himself means that both the principal balance and
+            //the redirected balance partecipate in the interest
+            return calculateCumulatedBalanceInternal(
+                _user,
+                currentPrincipalBalance.add(redirectedBalance)
+            ).sub(redirectedBalance);
+        } else {
+            //if the user redirected the interest, then only the redirected
+            //balance generates interest. In that case, the interest generated
+            //by the redirected balance is added to the current principal balance.
+            return currentPrincipalBalance.add(
+                calculateCumulatedBalanceInternal(
+                    _user,
+                    redirectedBalance
+                ).sub(redirectedBalance)
+            );
+        }
+    }
+
+    function principalBalanceOf(address _user) external view returns(uint256) {
+        return super.balanceOf(_user);
+    }
+
+    function totalSupply() public override view returns(uint256) {
+        
+        uint256 currentSupplyPrincipal = super.totalSupply();
+
+        if(currentSupplyPrincipal == 0) {
+            return 0;
+        }
+
+        return currentSupplyPrincipal
+            .wadToRay()
+            .rayMul(core.getReserveNormalizedIncome(underlyingAssetAddress))
+            .rayToWad();
+    }
+
     function isTransferAllowed(address _user, uint256 _amount) public view returns (bool) {
         return dataProvider.balanceDecreaseAllowed(underlyingAssetAddress, _user, _amount);
+    }
+
+    function getUserIndex(address _user) external view returns(uint256) {
+        return userIndexes[_user];
+    }
+
+    function getInterestRedirectAddress(address _user) external view returns(address) {
+        return interestRedirectionAddresses[_user];
+    }
+
+    function getRedirectedBalance(address _user) external view returns(uint256) {
+        return redirectedBalances[_user];
     }
 
     function cumulateBalanceInternal(address _user)
