@@ -6,6 +6,17 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import "../configuration/LendingPoolAddressesProvider.sol";
+import "../configuration/LendingPoolParametersProvider.sol";
+import "../tokenization/AToken.sol";
+import "../libraries/CoreLibrary.sol";
+import "../libraries/WadRayMath.sol";
+import "../libraries/EthAddressLib.sol";
+import "../interfaces/IFeeProvider.sol";
+import "./LendingPoolCore.sol";
+import "./LendingPoolLiquidationManager.sol";
+import "./LendingPoolDataProvider.sol";
+
 contract LendingPool is ReentrancyGuard {
     using SafeMath for uint256;
     using Address for address;
