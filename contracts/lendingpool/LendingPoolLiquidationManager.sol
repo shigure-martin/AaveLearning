@@ -195,8 +195,52 @@ contract LendingPoolLiquidationManager is ReentrancyGuard {
 
         //if liquidator reclaims the aToken, he receives the equivalent atoken amount
         if(_receiveAToken) {
-            collateralAtoken.transferOn
+            collateralAtoken.transferOnLiquidation(_user, msg.sender, maxCollateralToLiquidate);
+        } else {
+            //otherwise receives the underlying asset
+            //burn the equivalent amount of atoken
+            collateralAtoken.burnOnLiquidation(_user, maxCollateralToLiquidate);
+            core.transferToUser(_collateral, msg.sender, maxCollateralToLiquidate);
         }
+
+        core.transferToReserve(_reserve, msg.sender, vars.actualAmountToLiquidate);//@notice:Maybe there is a {value: msg.value}
+
+        if(vars.feeLiquidated > 0) {
+            //if there is enough collateral to liquidate the fee, first transfer burn an equivalent amount of
+            //aTokens of the user
+            collateralAtoken.burnOnLiquidation(_user, vars.liquidatedCollateralForFee);
+
+            //then liquidate the fee by transferring it to the fee collection address
+            core.liquidateFee(
+                _collateral, 
+                vars.liquidatedCollateralForFee,
+                addressesProvider.getTokenDistributor()
+            );
+
+            emit OriginationFeeLiquidated(
+                _collateral,
+                _reserve,
+                _user,
+                vars.feeLiquidated,
+                vars.liquidatedCollateralForFee,
+                //solium-disable-next-line
+                block.timestamp
+            );
+        }
+        emit LiquidationCall(
+            _collateral,
+            _reserve,
+            _user,
+            vars.actualAmountToLiquidate,
+            maxCollateralToLiquidate,
+            vars.borrowBalanceIncrease,
+            msg.sender,
+            _receiveAToken,
+            //solium-disable-next-line
+            block.timestamp
+        );
+
+        return (uint256(LiquidationErrors.NO_ERROR), "No errors");
     }
 
     struct AvailableCollateralToLiquidateLocalVars {
