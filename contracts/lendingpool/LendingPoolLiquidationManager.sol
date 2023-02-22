@@ -200,10 +200,10 @@ contract LendingPoolLiquidationManager is ReentrancyGuard {
             //otherwise receives the underlying asset
             //burn the equivalent amount of atoken
             collateralAtoken.burnOnLiquidation(_user, maxCollateralToLiquidate);
-            core.transferToUser(_collateral, msg.sender, maxCollateralToLiquidate);
+            core.transferToUser(_collateral, payable(msg.sender), maxCollateralToLiquidate);
         }
 
-        core.transferToReserve(_reserve, msg.sender, vars.actualAmountToLiquidate);//@notice:Maybe there is a {value: msg.value}
+        core.transferToReserve{value: msg.value}(_reserve, payable(msg.sender), vars.actualAmountToLiquidate);//@notice:Maybe there is a {value: msg.value}
 
         if(vars.feeLiquidated > 0) {
             //if there is enough collateral to liquidate the fee, first transfer burn an equivalent amount of
@@ -270,7 +270,7 @@ contract LendingPoolLiquidationManager is ReentrancyGuard {
 
         //this is the maximum possible amount of the selected collateral that can be liquidated, given the
         //max amount of principal currency that is available for liquidation.
-        vars.maxAmountCOllateralToLiquidate = vars
+        vars.maxAmountCollateralToLiquidate = vars
             .principalCurrencyPrice
             .mul(_purchaseAmount)
             .div(vars.collateralPrice)
