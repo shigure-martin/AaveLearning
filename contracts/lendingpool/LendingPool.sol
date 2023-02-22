@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-14 15:10:20
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-22 14:53:31
+ * @LastEditTime: 2023-02-22 17:08:22
  */
 //SPDX-License-Identifier:MIT
 pragma solidity ^0.8.9;
@@ -143,7 +143,7 @@ contract LendingPool is ReentrancyGuard {
 
     function initialize(LendingPoolAddressesProvider _addressesProvider) public {
         addressesProvider = _addressesProvider;
-        core = LendingPoolCore(addressesProvider.getLendingPoolCore());
+        core = LendingPoolCore(payable(addressesProvider.getLendingPoolCore()));
         dataProvider = LendingPoolDataProvider(addressesProvider.getLendingPoolDataProvider());
         parametersProvider = LendingPoolParametersProvider(addressesProvider.getLendingPoolParametersProvider());
         feeProvider = IFeeProvider(addressesProvider.getFeeProvider());
@@ -167,7 +167,7 @@ contract LendingPool is ReentrancyGuard {
 
         aToken.mintOnDeposit(msg.sender, _amount);
 
-        core.transferToReserve{value: msg.value}(_reserve, msg.sender, _amount);
+        core.transferToReserve{value: msg.value}(_reserve, payable(msg.sender), _amount);
 
         emit Deposit(_reserve, msg.sender, _amount, _referralCode, block.timestamp);
 
@@ -302,7 +302,7 @@ contract LendingPool is ReentrancyGuard {
             vars.rateMode
         );
 
-        core.transferToUser(_reserve, msg.sender, _amount);
+        core.transferToUser(_reserve, payable(msg.sender), _amount);
 
         emit Borrow(
             _reserve,
@@ -318,7 +318,6 @@ contract LendingPool is ReentrancyGuard {
         );
     }
 
-    //@todo:RepayLocalVars
     struct RepayLocalVars {
         uint256 principalBorrowBalance;
         uint256 compoundedBorrowBalance;
@@ -339,6 +338,7 @@ contract LendingPool is ReentrancyGuard {
     {
 
         RepayLocalVars memory vars;
+        uint256 feeValue;
 
         (
             vars.principalBorrowBalance,
@@ -379,7 +379,7 @@ contract LendingPool is ReentrancyGuard {
                 false
             );
 
-            uint256 feeValue = vars.isETH ? vars.paybackAmount : 0;
+            feeValue = vars.isETH ? vars.paybackAmount : 0;
 
             core.transferToFeeCollectionAddress{value: feeValue}(
                 _reserve, 
@@ -414,7 +414,7 @@ contract LendingPool is ReentrancyGuard {
 
         //if the user didn't repay the origination fee, transfer the fee to the fee collection address
         if(vars.originationFee > 0) {
-            uint256 feeValue = vars.isETH ? vars.originationFee : 0;
+            feeValue = vars.isETH ? vars.originationFee : 0;
 
             core.transferToFeeCollectionAddress{value: feeValue}(
                 _reserve,
@@ -426,8 +426,8 @@ contract LendingPool is ReentrancyGuard {
         //sending the total msg.value if the transfer is ETH.
         //the transferToReserve() function will take care of sending the
         //excess ETH back to the caller
-        uint256 feeValue = vars.isETH ? msg.value.sub(vars.originationFee) : 0;
-        core.transferToReserve{value: feeValue}(_reserve, msg.sender, vars.paybackAmountMinusFees);
+        feeValue = vars.isETH ? msg.value.sub(vars.originationFee) : 0;
+        core.transferToReserve{value: feeValue}(_reserve, payable(msg.sender), vars.paybackAmountMinusFees);
 
         emit Repay(
             _reserve,
@@ -441,7 +441,254 @@ contract LendingPool is ReentrancyGuard {
         );
     }
 
-    //@todo swapBorrowRateMode
+    function swapBorrowRateMode(address _reserve) 
+        external
+        nonReentrant
+        onlyActiveReserve(_reserve)
+        onlyUnfreezedReserve(_reserve)
+    {
+        (uint256 principalBorrowBalance, uint256 compoundedBorrowBalance, uint256 borrowBalanceIncrease) = core
+            .getUserBorrowBalances(_reserve, msg.sender);
+
+        require(compoundedBorrowBalance > 0, "User does not have a borrow in progress on this reserve");
+
+        CoreLibrary.InterestRateMode currentRateMode = core.getUserCurrentBorrowRateMode(_reserve, msg.sender);
+
+        if(currentRateMode == CoreLibrary.InterestRateMode.VARIABLE) {
+            /**
+            * user wants to swap to stable, before swapping we need to ensure that
+            * 1. stable borrow rate is enabled on the reserve
+            * 2. user is not trying to abuse the reserve by depositing
+            * more collateral than he is borrowing, artificially lowering
+            * the interest rate, borrowing at variable, and switching to stable
+            **/
+            require(
+                core.isUserAllowedToBorrowAtStable(_reserve, msg.sender, compoundedBorrowBalance),
+                "User cannot borrow the selected amount at stable"
+            );
+        }
+
+        (CoreLibrary.InterestRateMode newRateMode, uint256 newBorrowRate) = core
+            .updateStateOnSwapRate(
+                _reserve,
+                msg.sender,
+                principalBorrowBalance,
+                compoundedBorrowBalance,
+                borrowBalanceIncrease,
+                currentRateMode
+            );
+        
+        emit Swap(
+            _reserve,
+            msg.sender,
+            uint256(newRateMode),
+            newBorrowRate,
+            borrowBalanceIncrease,
+            //solium-disable-next-line
+            block.timestamp
+        );
+    }
+
+    //@todo:rebalanceStableBorrowRate
+    function rebalanceStableBorrowRate(address _reserve, address _user)
+        external
+        nonReentrant
+        onlyActiveReserve(_reserve)
+    {
+        (
+            ,
+            uint256 compoundedBalance,
+            uint256 borrowBalanceIncrease
+        ) = core.getUserBorrowBalances(_reserve, _user);
+
+        //step 1: user must be borrowing on _reserve at a stable rate
+        require(compoundedBalance > 0, "User does not have any borrow for this reserve");
+
+        require(
+            core.getUserCurrentBorrowRateMode(_reserve, _user) == CoreLibrary.InterestRateMode.STABLE,
+            "The user borrow is variable and cannot be rebalanced"
+        );
+
+        uint256 userCurrentStableRate = core.getUserCurrentStableBorrowRate(_reserve, _user);
+        uint256 liquidityRate = core.getReserveCurrentLiquidityRate(_reserve);
+        uint256 reserveCurrentStableRate = core.getReserveCurrentStableBorrowRate(_reserve);
+        uint256 rebalanceDownRateThreshold = reserveCurrentStableRate
+            .rayMul(
+                WadRayMath.ray().add(parametersProvider.getRebalanceDownRateDelta())
+            );
+        
+        //step 2: we have two possible situations to rebalance:
+
+        //1. user stable borrow rate is below the current liquidity rate. The loan needs to be rebalanced,
+        //as this situation can be abused (user putting back the borrowed liquidity in the same reserve to earn on it)
+        //2. user stable rate is above the market avg borrow rate of a certain delta, and utilization rate is low.
+        //In this case, the user is paying an interest that is too high, and needs to be rescaled down.
+        if(
+            userCurrentStableRate < liquidityRate ||
+            userCurrentStableRate > rebalanceDownRateThreshold
+        ) {
+            uint256 newStableRate = core.updateStateOnRebalance(
+                _reserve,
+                _user,
+                borrowBalanceIncrease
+            );
+
+            emit RebalanceStableBorrowRate(
+                _reserve,
+                _user,
+                newStableRate,
+                borrowBalanceIncrease,
+                //solium-disable-next-line
+                block.timestamp
+            );
+
+            return ;
+        }
+
+        revert("Interest rate rebalance conditions were not met");
+    }
+
+    function setUserUseReserveAsCollateral(address _reserve, bool _useAsCollateral)
+        external
+        nonReentrant
+        onlyActiveReserve(_reserve)
+        onlyUnfreezedReserve(_reserve)
+    {
+        uint256 underlyingBalance = core.getUserUnderlyingAssetBalance(_reserve, msg.sender);
+
+        require(underlyingBalance > 0, "User does not have any liquidity deposited");
+
+        require(
+            dataProvider.balanceDecreaseAllowed(_reserve, msg.sender, underlyingBalance),
+            "User deposit is already being used as collateral"
+        );
+
+        core.setUserUseReserveAsCollateral(_reserve, msg.sender, _useAsCollateral);
+
+        if(_useAsCollateral) {
+            emit ReserveUsedAsCollateralEnabled(_reserve, msg.sender);
+        } else {
+            emit ReserveUsedAsCollateralDisabled(_reserve, msg.sender);
+        }
+    }
+
+    function liquidationCall(
+        address _collateral,
+        address _reserve,
+        address _user,
+        uint256 _purchaseAmount,
+        bool _receiveAToken
+    ) 
+        external 
+        payable 
+        nonReentrant 
+        onlyActiveReserve(_reserve) 
+        onlyActiveReserve(_collateral)
+    {
+        address liquidationManager = addressesProvider.getLendingPoolLiquidationManager();
+
+        (
+            bool success,
+            bytes memory result 
+        ) = liquidationManager.delegatecall(
+            abi.encodeWithSignature(
+                "liquidationCall(address,address,address,uint256,bool)", 
+                _collateral,
+                _reserve,
+                _user,
+                _purchaseAmount,
+                _receiveAToken
+            )
+        );
+        require(success, "Liquidation call failed");
+
+        (uint256 returnCode, string memory returnMessage) = abi.decode(result, (uint256, string));
+
+        if(returnCode != 0) {
+            revert(string(abi.encodePacked("Liquidation failed: ", returnMessage)));
+        }
+    }
+
+    //@todo: function flashLoan
+
+    function getReserveConfigurationData(address _reserve)
+        external
+        view
+        returns(
+            uint256 ltv,
+            uint256 liquidationThreshold,
+            uint256 liquidationBonus,
+            address interestRateStrategyAddress,
+            bool usageAsCollateralEnabled,
+            bool borrowingEnabled,
+            bool stableBorrowRateEnabled,
+            bool isActive
+        )
+    {
+        return dataProvider.getReserveConfigurationData(_reserve);
+    }
+
+    function getReserveData(address _reserve)
+        external
+        view
+        returns (
+            uint256 totalLiquidity,
+            uint256 availableLiquidity,
+            uint256 totalBorrowsStable,
+            uint256 totalBorrowsVariable,
+            uint256 liquidityRate,
+            uint256 variableBorrowRate,
+            uint256 stableBorrowRate,
+            uint256 averageStableBorrowRate,
+            uint256 utilizationRate,
+            uint256 liquidityIndex,
+            uint256 variableBorrowIndex,
+            address aTokenAddress,
+            uint40 lastUpdateTimestamp
+        )
+    {
+        return dataProvider.getReserveData(_reserve);
+    }
+
+    function getUserAccountData(address _user)
+        external
+        view
+        returns (
+            uint256 totalLiquidityETH,
+            uint256 totalCollateralETH,
+            uint256 totalBorrowsETH,
+            uint256 totalFeesETH,
+            uint256 availableBorrowsETH,
+            uint256 currentLiquidationThreshold,
+            uint256 ltv,
+            uint256 healthFactor
+        )
+    {
+        return dataProvider.getUserAccountData(_user);
+    }
+
+    function getUserReserveData(address _reserve, address _user)
+        external
+        view
+        returns (
+            uint256 currentATokenBalance,
+            uint256 currentBorrowBalance,
+            uint256 principalBorrowBalance,
+            uint256 borrowRateMode,
+            uint256 borrowRate,
+            uint256 liquidityRate,
+            uint256 originationFee,
+            uint256 variableBorrowIndex,
+            uint256 lastUpdateTimestamp,
+            bool usageAsCollateralEnabled
+        )
+    {
+        return dataProvider.getUserReserveData(_reserve, _user);
+    }
+
+    function getReserves() external view returns (address[] memory) {
+        return core.getReserves();
+    }
 
     function requireReserveActiveInternal(address _reserve) internal view {
         require(core.getReserveIsActive(_reserve), "Action requires an active reserve");

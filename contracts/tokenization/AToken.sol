@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:18:59
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-21 16:48:24
+ * @LastEditTime: 2023-02-22 17:09:47
  */
 //SPDX-License-Identifier:MIT
 
@@ -179,7 +179,12 @@ contract AToken is ERC20 {
             userIndexReset = resetDataOnZeroBalanceInternal(msg.sender);
         }
 
-        pool.redeemUnderlying();
+        pool.redeemUnderlying(
+            underlyingAssetAddress,
+            payable(msg.sender),
+            amountToRedeem,
+            currentBalance.sub(amountToRedeem)
+        );
 
         emit Redeem(msg.sender, amountToRedeem, balanceIncrease, userIndexReset ? 0 : index);
     }
