@@ -8,7 +8,7 @@ contract AddressStorage {
         return addresses[_key];
     }
 
-    function setAddress(bytes32 _key, address _value) internal {
+    function _setAddress(bytes32 _key, address _value) internal {
         addresses[_key] = _value;
     }
 }
