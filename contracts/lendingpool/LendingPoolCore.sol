@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-16 10:58:30
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-21 17:06:37
+ * @LastEditTime: 2023-02-23 16:58:10
  */
 //SPDX-License-Identifier:MIT
 
@@ -328,6 +328,12 @@ contract LendingPoolCore {
         }
     }
     //@notice data access function
+
+    
+    // avoid stack too deep
+    function getReserveData(address _reserve) external view returns (CoreLibrary.ReserveData memory) {
+        return reserves[_reserve];
+    }
 
     //return user's balance, fee accrued, reserve enabled/disabled as collateral
 

@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-14 15:10:20
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-22 17:08:22
+ * @LastEditTime: 2023-02-23 17:02:49
  */
 //SPDX-License-Identifier:MIT
 pragma solidity ^0.8.9;
@@ -632,19 +632,20 @@ contract LendingPool is ReentrancyGuard {
         external
         view
         returns (
-            uint256 totalLiquidity,
-            uint256 availableLiquidity,
-            uint256 totalBorrowsStable,
-            uint256 totalBorrowsVariable,
-            uint256 liquidityRate,
-            uint256 variableBorrowRate,
-            uint256 stableBorrowRate,
-            uint256 averageStableBorrowRate,
-            uint256 utilizationRate,
-            uint256 liquidityIndex,
-            uint256 variableBorrowIndex,
-            address aTokenAddress,
-            uint40 lastUpdateTimestamp
+            CoreLibrary.ReserveData memory
+            // uint256 totalLiquidity,
+            // uint256 availableLiquidity,
+            // uint256 totalBorrowsStable,
+            // uint256 totalBorrowsVariable,
+            // uint256 liquidityRate,
+            // uint256 variableBorrowRate,
+            // uint256 stableBorrowRate,
+            // uint256 averageStableBorrowRate,
+            // uint256 utilizationRate,
+            // uint256 liquidityIndex,
+            // uint256 variableBorrowIndex,
+            // address aTokenAddress,
+            // uint40 lastUpdateTimestamp
         )
     {
         return dataProvider.getReserveData(_reserve);

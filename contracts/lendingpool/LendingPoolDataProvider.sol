@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-20 10:55:45
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-20 15:50:13
+ * @LastEditTime: 2023-02-23 17:01:07
  */
 //SPDX-License-Identifier:MIT
 
@@ -290,34 +290,36 @@ contract LendingPoolDataProvider {
         external 
         view 
         returns (
-            uint256 totalLiquidity,
-            uint256 availableLiquidity,
-            uint256 totalBorrowsStable,
-            uint256 totalBorrowsVariable,
-            uint256 liquidityRate,
-            uint256 variableBorrowRate,
-            uint256 stableBorrowRate,
-            uint256 averageStableBorrowRate,
-            uint256 utilizationRate,
-            uint256 liquidityIndex,
-            uint256 variableBorrowIndex,
-            address aTokenAddress,
-            uint40 lastUpdateTimestamp
+            CoreLibrary.ReserveData memory
+            // uint256 totalLiquidity,
+            // uint256 availableLiquidity,
+            // uint256 totalBorrowsStable,
+            // uint256 totalBorrowsVariable,
+            // uint256 liquidityRate,
+            // uint256 variableBorrowRate,
+            // uint256 stableBorrowRate,
+            // uint256 averageStableBorrowRate,
+            // uint256 utilizationRate,
+            // uint256 liquidityIndex,
+            // uint256 variableBorrowIndex,
+            // address aTokenAddress,
+            // uint40 lastUpdateTimestamp
         )
     {
-        totalLiquidity = core.getReserveTotalLiquidity(_reserve);
-        availableLiquidity = core.getReserveAvailableLiquidity(_reserve);
-        totalBorrowsStable = core.getReserveTotalBorrowsStable(_reserve);
-        totalBorrowsVariable = core.getReserveTotalBorrowsVariable(_reserve);
-        liquidityRate = core.getReserveCurrentLiquidityRate(_reserve);
-        variableBorrowRate = core.getReserveCurrentVariableBorrowRate(_reserve);
-        stableBorrowRate = core.getReserveCurrentStableBorrowRate(_reserve);
-        averageStableBorrowRate = core.getReserveCurrentAverageStableBorrowRate(_reserve);
-        utilizationRate = core.getReserveUtilizationRate(_reserve);
-        liquidityIndex = core.getReserveLiquidityCumulativeIndex(_reserve);
-        variableBorrowIndex = core.getReserveVariableBorrowsCumulativeIndex(_reserve);
-        aTokenAddress = core.getReserveATokenAddress(_reserve);
-        lastUpdateTimestamp = core.getReserveLastUpdate(_reserve);
+        return core.getReserveData(_reserve);
+        // totalLiquidity = core.getReserveTotalLiquidity(_reserve);
+        // availableLiquidity = core.getReserveAvailableLiquidity(_reserve);
+        // totalBorrowsStable = core.getReserveTotalBorrowsStable(_reserve);
+        // totalBorrowsVariable = core.getReserveTotalBorrowsVariable(_reserve);
+        // liquidityRate = core.getReserveCurrentLiquidityRate(_reserve);
+        // variableBorrowRate = core.getReserveCurrentVariableBorrowRate(_reserve);
+        // stableBorrowRate = core.getReserveCurrentStableBorrowRate(_reserve);
+        // averageStableBorrowRate = core.getReserveCurrentAverageStableBorrowRate(_reserve);
+        // utilizationRate = core.getReserveUtilizationRate(_reserve);
+        // liquidityIndex = core.getReserveLiquidityCumulativeIndex(_reserve);
+        // variableBorrowIndex = core.getReserveVariableBorrowsCumulativeIndex(_reserve);
+        // aTokenAddress = core.getReserveATokenAddress(_reserve);
+        // lastUpdateTimestamp = core.getReserveLastUpdate(_reserve);
     }
 
     function getUserAccountData(address _user)
