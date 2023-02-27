@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-15 13:48:40
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-22 17:51:52
+ * @LastEditTime: 2023-02-27 11:00:02
  */
 //SPDX-License-Identifier:MIT
 pragma solidity ^0.8.9;
@@ -26,6 +26,7 @@ contract LendingPoolAddressesProvider is Ownable, AddressStorage {
     bytes32 private constant LENDING_POOL_PARAMETERS_PROVIDER = "PARAMETERS_PROVIDER";
     bytes32 private constant TOKEN_DISTRIBUTOR = "TOKEN_DISTRIBUTOR";
     bytes32 private constant LENDING_POOL_LIQUIDATION_MANAGER = "LIQUIDATION_MANAGER";
+    bytes32 private constant LENDING_POOL_MANAGER = "LENDING_POOL_MANAGER";
 
     event LendingPoolUpdated(address indexed newAddress);
     event LendingPoolCoreUpdated(address indexed newAddress);
@@ -37,6 +38,7 @@ contract LendingPoolAddressesProvider is Ownable, AddressStorage {
     event LendingPoolParametersUpdated(address indexed newAddress);
     event TokenDistributorUpdated(address indexed newAddress);
     event LendingPoolLiquidationManagerUpdated(address indexed newAddress);
+    event LendingPoolManagerUpdated(address indexed newAddress);
 
     function getLendingPool() public view returns(address) {
         return getAddress(LENDING_POOL);
@@ -121,6 +123,15 @@ contract LendingPoolAddressesProvider is Ownable, AddressStorage {
 
     function getLendingPoolLiquidationManager() public view returns (address) {
         return getAddress(LENDING_POOL_LIQUIDATION_MANAGER);
+    }
+
+    function setLendingPoolManager(address _lendingPoolManager) public onlyOwner {
+        _setAddress(LENDING_POOL_MANAGER, _lendingPoolManager);
+        emit LendingPoolManagerUpdated(_lendingPoolManager);
+    }
+
+    function getLendingPoolManager() public view returns (address) {
+        return getAddress(LENDING_POOL_MANAGER);
     }
 
     function setLendingPoolLiquidationManager(address _liquidationManager) public onlyOwner {
