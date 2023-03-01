@@ -3,46 +3,71 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-28 15:32:59
+ * @LastEditTime: 2023-03-01 11:08:48
  */
 
 const envDeploy = async() => {
-    const [owner, otherAccount] = await ethers.getSigners();
+};
 
+//Library Instance
+const CoreLibraryInstance = async() => {
     const CoreLibrary = await ethers.getContractFactory("CoreLibrary");
-    ethers.getContractFactory("WadRayMath");
 
     const coreLibrary = await CoreLibrary.deploy();
 
+    return {coreLibrary};
+};
+
+//Contract Instance
+const LendingPoolInstance = async() => {
     const Pool = await ethers.getContractFactory("LendingPool");
+    
+    const pool = await Pool.deploy();
+
+    return {pool};
+};
+
+const LendingPoolCoreInstance = async() => {
+    const {coreLibrary} = await CoreLibraryInstance();
+
     const Core = await ethers.getContractFactory("LendingPoolCore", {
         libraries: {
             CoreLibrary: coreLibrary.address,
         },
     });
-    const DataProvider = await ethers.getContractFactory("LendingPoolDataProvider", {
-        libraries: {
-            //CoreLibrary: coreLibrary.address,
-        }
-    });
 
-    const pool = await Pool.deploy();
     const core = await Core.deploy();
+
+    return {core};
+};
+
+const DataProviderInstance = async() => {
+    const DataProvider = await ethers.getContractFactory("LendingPoolDataProvider");
+
     const dataProvider = await DataProvider.deploy();
 
+    return {dataProvider};
+};
+
+const AddressesProviderInstance = async() => {
     const AddressesProvider = await ethers.getContractFactory("LendingPoolAddressesProvider");
+    
     const addressesProvider = await AddressesProvider.deploy();
+
+    const {pool} = await LendingPoolInstance();
+    const {core} = await LendingPoolCoreInstance();
+    const {dataProvider} = await DataProviderInstance();
 
     await addressesProvider.setLendingPool(pool.address);
     await addressesProvider.setLendingPoolCore(core.address);
     await addressesProvider.setLendingPoolDataProvider(dataProvider.address);
 
-    // console.log(pool.address);
-    const result = await addressesProvider.getLendingPool();
-    // console.log(result);
-    return {addressesProvider, owner, otherAccount};
+    //return {addressesProvider};
 };
 
 module.exports = {
-    envDeploy,
+    LendingPoolInstance,
+    LendingPoolCoreInstance,
+    DataProviderInstance,
+    AddressesProviderInstance,
 };
