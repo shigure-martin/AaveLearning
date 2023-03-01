@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-27 17:20:46
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-01 10:35:34
+ * @LastEditTime: 2023-03-01 16:05:31
  */
 const {
     loadFixture,
@@ -11,7 +11,12 @@ const {
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const { ETHEREUM_ADDRESS } = require("../utils/constants");
-const { AddressesProviderInstance } = require("./testEnvProvider");
+const { 
+    AddressesProviderInstance,
+    LendingPoolCoreInstance,
+    LendingPoolInstance,
+    DataProviderInstance
+} = require("./testEnvProvider");
 
 describe("atoken-modifiers", function() {
 
@@ -19,7 +24,9 @@ describe("atoken-modifiers", function() {
         const [owner, otherAccount] = await ethers.getSigners();
 
         const { addressesProvider } = await AddressesProviderInstance();
-        
+        const { core } = await LendingPoolCoreInstance();
+        const { pool } = await LendingPoolInstance();
+        const { dataProvider } = await DataProviderInstance();
 
         const AToken = await ethers.getContractFactory("AToken");
         const _aDai = await AToken.deploy(
