@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-01 16:40:44
+ * @LastEditTime: 2023-03-01 18:07:09
  */
 
 var addressesProvider;
@@ -57,10 +57,12 @@ const DataProviderInstance = async() => {
     return {dataProvider};
 };
 
-const AddressesProviderInstance = async() => {
+const AddressesProviderInstance = async(owner) => {
     const AddressesProvider = await ethers.getContractFactory("LendingPoolAddressesProvider");
     
     addressesProvider = await AddressesProvider.deploy();
+
+    await addressesProvider.setLendingPoolManager(owner.address);
 
     // const {pool} = await LendingPoolInstance();
     // const {core} = await LendingPoolCoreInstance();
@@ -95,6 +97,16 @@ const TokenInstance = async(deployer, name, symbol) => {
     return {token};
 }
 
+const PoolConfiguratorInstance = async() => {
+    const Configurator = await ethers.getContractFactory("LendingPoolConfigurator");
+
+    const poolConfigurator = await Configurator.deploy();
+
+    await addressesProvider.setLendingPoolConfigurator(poolConfigurator.address);
+
+    await poolConfigurator.initialize(addressesProvider.address);
+};
+
 module.exports = {
     LendingPoolInstance,
     LendingPoolCoreInstance,
@@ -102,4 +114,5 @@ module.exports = {
     AddressesProviderInstance,
     ATokenInstance,
     TokenInstance,
+    PoolConfiguratorInstance
 };
