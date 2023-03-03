@@ -3,8 +3,10 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-01 18:07:09
+ * @LastEditTime: 2023-03-03 17:55:17
  */
+
+const { BigNumber } = require("ethers");
 
 var addressesProvider;
 
@@ -75,15 +77,15 @@ const AddressesProviderInstance = async(owner) => {
     return {addressesProvider};
 };
 
-const ATokenInstance = async() => {
-    const { addressesProvider } = await AddressesProviderInstance();
+const ATokenInstance = async(_underlyingAsset, _name, _symbol) => {
+    // const { addressesProvider } = await AddressesProviderInstance();
     
     const AToken = await ethers.getContractFactory("AToken");
     const _aDai = await AToken.deploy(
         addressesProvider.address,
-        ETHEREUM_ADDRESS,
-        "wrapedETH",
-        "WETH"
+        _underlyingAsset,
+        _name,
+        _symbol
     );
     return {_aDai}; 
 };
@@ -93,6 +95,7 @@ const TokenInstance = async(deployer, name, symbol) => {
 
     const Token_new = await Token.connect(deployer);
     const token = await Token_new.deploy(name, symbol);
+    await token.deployed();
     
     return {token};
 }
@@ -105,7 +108,46 @@ const PoolConfiguratorInstance = async() => {
     await addressesProvider.setLendingPoolConfigurator(poolConfigurator.address);
 
     await poolConfigurator.initialize(addressesProvider.address);
+
+    return {poolConfigurator};
 };
+
+const InterestRateStrategyInstance = async(reserve) => {
+    const Strategy = await ethers.getContractFactory("DefaultReserveInterestRateStrategy");
+
+    const ray = BigNumber.from(10).pow(27);
+    const baseVariableBorrowRate = BigNumber.from(3).mul(ray);
+    const variableRateSlope1 = BigNumber.from(5).mul(ray);
+    const variableRateSlope2 = BigNumber.from(8).mul(ray);
+    const stableRateSlope1 = BigNumber.from(5).mul(ray);
+    const stableRateSlope2 = BigNumber.from(8).mul(ray);
+
+    const strategy = await Strategy.deploy(
+        reserve,
+        addressesProvider.address,
+        baseVariableBorrowRate,
+        variableRateSlope1,
+        variableRateSlope2,
+        stableRateSlope1,
+        stableRateSlope2
+    );
+    await strategy.deployed();
+
+    await LendingRateOracleInstance(reserve);
+
+    return { strategy };
+}
+
+const LendingRateOracleInstance = async(_asset) => {
+    const Oracle = await ethers.getContractFactory("LendingRateOracle");
+    const oracle = await Oracle.deploy();
+
+    const ray = BigNumber.from(10).pow(27);
+    const rate = BigNumber.from(25).mul(ray);
+
+    await oracle.setMarketBorrowRate(_asset, rate);
+    addressesProvider.setLendingRateOracle(oracle.address);
+}
 
 module.exports = {
     LendingPoolInstance,
@@ -114,5 +156,6 @@ module.exports = {
     AddressesProviderInstance,
     ATokenInstance,
     TokenInstance,
-    PoolConfiguratorInstance
+    PoolConfiguratorInstance,
+    InterestRateStrategyInstance
 };

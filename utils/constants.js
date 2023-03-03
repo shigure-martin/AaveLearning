@@ -3,11 +3,11 @@
  * @Author: Martin
  * @Date: 2023-02-27 15:03:40
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-01 16:06:48
+ * @LastEditTime: 2023-03-03 17:40:30
  */
 const { BigNumber } = require("ethers");
 
-const decimal = BigNumber.from(10).pow(18);
+const decimal = BigNumber.from(10).pow(27);
 
 const RAY = 1 * 10 ** 27
 const ETHEREUM_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
