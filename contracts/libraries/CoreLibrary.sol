@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-15 15:14:21
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-16 14:58:00
+ * @LastEditTime: 2023-03-07 10:19:44
  */
 
 //SPDX-License-Identifier:MIT
@@ -159,7 +159,7 @@ library CoreLibrary {
     function enableBorrowing(ReserveData storage _self, bool _stableBorrowRateEnabled) external {
         require(_self.borrowingEnabled == false, "Reserve is already enabled!");
 
-        _self.borrowingEnabled == true;
+        _self.borrowingEnabled = true;
         _self.isStableBorrowRateEnabled = _stableBorrowRateEnabled;
     }
 

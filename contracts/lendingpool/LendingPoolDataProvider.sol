@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-20 10:55:45
  * @LastEditors: Martin
- * @LastEditTime: 2023-02-23 17:01:07
+ * @LastEditTime: 2023-03-07 16:59:30
  */
 //SPDX-License-Identifier:MIT
 
@@ -69,6 +69,8 @@ contract LendingPoolDataProvider {
         address[] memory reserves = core.getReserves();
 
         for (uint256 i = 0; i < reserves.length; i++) {
+            vars.currentReserve = reserves[i];
+
             (
                 vars.compoundedLiquidityBalance,
                 vars.compoundedBorrowBalance,
