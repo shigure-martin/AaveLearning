@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-03-01 10:23:11
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-07 17:08:40
+ * @LastEditTime: 2023-03-07 17:59:37
  */
 const { BigNumber } = require("ethers");
 
@@ -129,8 +129,20 @@ describe("atoken-transfer", function () {
             from: Accounts[0].address,
             value: BigNumber.from(1).mul(decimal)
         });
-        //console.log(await dataProvider.calculateUserGlobalData(Accounts[0].address)); 
-
+        
         await expect(pool.borrow(ETHEREUM_ADDRESS, BigNumber.from(decimal).div(10), RATEMODE.STABLE, "0", {from: Accounts[0].address})).to.be.revertedWith("The collateral balance is 0");
+    });
+
+    it("'User 1 sets the DAI as collateral and borrows, tries to transfer everything back to user 0 (revert expected)", async function () {
+        await pool.setUserUseReserveAsCollateral(token.address, true, {from: Accounts[0].address});
+
+        const aTokenTransfer = BigNumber.from(1000).mul(decimal);
+
+        console.log(await core.getUserBasicReserveData(token.address, Accounts[0].address));
+        console.log(await core.getReserveConfiguration(token.address));
+
+        await pool.borrow(ETHEREUM_ADDRESS, BigNumber.from(decimal).div(10), RATEMODE.STABLE, "0", {from: Accounts[0].address});
+
+        await expect(aToken.transfer(Accounts[1].address, aTokenTransfer, {from: Accounts[0]}), "Transfer cannot be allowed");
     });
 });
