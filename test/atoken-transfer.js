@@ -3,12 +3,12 @@
  * @Author: Martin
  * @Date: 2023-03-01 10:23:11
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-06 17:29:44
+ * @LastEditTime: 2023-03-07 17:08:40
  */
 const { BigNumber } = require("ethers");
 
 const { expect } = require("chai");
-const { ETHEREUM_ADDRESS, APPROVAL_AMOUNT_LENDING_POOL_CORE } = require("../utils/constants");
+const { ETHEREUM_ADDRESS, APPROVAL_AMOUNT_LENDING_POOL_CORE, RATEMODE } = require("../utils/constants");
 const { 
     LendingPoolCoreInstance, 
     TokenInstance, 
@@ -17,13 +17,14 @@ const {
     AddressesProviderInstance,
     PoolConfiguratorInstance,
     DataProviderInstance,
-    InterestRateStrategyInstance
+    InterestRateStrategyInstance,
+    PriceOracleInstance
 } = require("./testEnvProvider");
 
 describe("atoken-transfer", function () {
     const decimal = BigNumber.from(10).pow(18);
 
-    var Accounts, core, token, aToken, pool;
+    var Accounts, core, token, aToken, pool, dataProvider;
 
     async function init () {
         [...Accounts] = await ethers.getSigners();
@@ -33,10 +34,12 @@ describe("atoken-transfer", function () {
         core = await LendingPoolCoreInstance();
         pool = await LendingPoolInstance();
         token = await TokenInstance(Accounts[1], "dai", "DAI");
-        const { dataProvider } = await DataProviderInstance();
+        // const { dataProvider } = await DataProviderInstance();
+        dataProvider = await DataProviderInstance();
         //const { aToken } = await ATokenInstance(addressesProvider.address, token.address, await token.name(), await token.symbol());
         const { strategy } = await InterestRateStrategyInstance(token.address);
         const { poolConfigurator } = await PoolConfiguratorInstance();
+        await PriceOracleInstance();
 
         //configuration of instances
         await pool.initialize(addressesProvider.address);
@@ -45,10 +48,8 @@ describe("atoken-transfer", function () {
 
         await poolConfigurator.refreshLendingPoolCoreConfiguration();
         await poolConfigurator.initReserve(token.address, 18, strategy.address);
-        console.log(token.address);
-        console.log(ETHEREUM_ADDRESS);
-        console.log(await addressesProvider.getLendingPoolManager());
-        await poolConfigurator.initReserve(ETHEREUM_ADDRESS, 18, strategy.address);
+        await poolConfigurator.initReserveWithData(ETHEREUM_ADDRESS, "Aave Interest bearing ETH", "aETH", 18, strategy.address);
+        await poolConfigurator.enableBorrowingOnReserve(ETHEREUM_ADDRESS, true);
 
         var reserve = await core.getReserveData(token.address);
         aToken = await (await ATokenInstance(reserve.aTokenAddress)).aToken;
@@ -124,11 +125,12 @@ describe("atoken-transfer", function () {
     });
 
     it("User 0 deposits 1 ETH and user tries to borrow, but the aTokens received as a transfer are not available as collateral (revert expected)", async function () {
-        await pool.deposit(ETHEREUM_ADDRESS, BigNumber.from(10).pow(18), '0', {
+        await pool.deposit(ETHEREUM_ADDRESS, BigNumber.from(1).mul(decimal), '0', {
             from: Accounts[0].address,
-            value: BigNumber.from(10).pow(18)
+            value: BigNumber.from(1).mul(decimal)
         });
+        //console.log(await dataProvider.calculateUserGlobalData(Accounts[0].address)); 
 
-        
+        await expect(pool.borrow(ETHEREUM_ADDRESS, BigNumber.from(decimal).div(10), RATEMODE.STABLE, "0", {from: Accounts[0].address})).to.be.revertedWith("The collateral balance is 0");
     });
 });

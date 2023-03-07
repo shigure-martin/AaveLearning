@@ -3,10 +3,11 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-06 16:50:08
+ * @LastEditTime: 2023-03-07 16:49:32
  */
 
 const { BigNumber } = require("ethers");
+const { ETHEREUM_ADDRESS } = require("../utils/constants");
 
 var addressesProvider;
 
@@ -56,7 +57,7 @@ const DataProviderInstance = async() => {
 
     await addressesProvider.setLendingPoolDataProvider(dataProvider.address);
 
-    return {dataProvider};
+    return dataProvider;
 };
 
 const AddressesProviderInstance = async(owner) => {
@@ -150,6 +151,15 @@ const LendingRateOracleInstance = async(_asset) => {
     addressesProvider.setLendingRateOracle(oracle.address);
 }
 
+const PriceOracleInstance = async() => {
+    const PriceOracle = await ethers.getContractFactory("PriceOracle");
+    const priceOracle = await PriceOracle.deploy();
+
+    await addressesProvider.setPriceOracle(priceOracle.address);
+
+    await priceOracle.setAssetPrice(ETHEREUM_ADDRESS, 1000);
+}
+
 module.exports = {
     LendingPoolInstance,
     LendingPoolCoreInstance,
@@ -158,5 +168,6 @@ module.exports = {
     ATokenInstance,
     TokenInstance,
     PoolConfiguratorInstance,
-    InterestRateStrategyInstance
+    InterestRateStrategyInstance,
+    PriceOracleInstance
 };
