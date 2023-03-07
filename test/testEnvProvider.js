@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-03 17:55:17
+ * @LastEditTime: 2023-03-06 16:50:08
  */
 
 const { BigNumber } = require("ethers");
@@ -30,7 +30,7 @@ const LendingPoolInstance = async() => {
 
     await addressesProvider.setLendingPool(pool.address);
 
-    return {pool};
+    return pool;
 };
 
 const LendingPoolCoreInstance = async() => {
@@ -46,7 +46,7 @@ const LendingPoolCoreInstance = async() => {
 
     await addressesProvider.setLendingPoolCore(core.address);
 
-    return {core};
+    return core;
 };
 
 const DataProviderInstance = async() => {
@@ -77,17 +77,18 @@ const AddressesProviderInstance = async(owner) => {
     return {addressesProvider};
 };
 
-const ATokenInstance = async(_underlyingAsset, _name, _symbol) => {
+const ATokenInstance = async(address) => {
     // const { addressesProvider } = await AddressesProviderInstance();
     
     const AToken = await ethers.getContractFactory("AToken");
-    const _aDai = await AToken.deploy(
-        addressesProvider.address,
-        _underlyingAsset,
-        _name,
-        _symbol
-    );
-    return {_aDai}; 
+    // const _aDai = await AToken.deploy(
+    //     addressesProvider.address,
+    //     _underlyingAsset,
+    //     _name,
+    //     _symbol
+    // );
+    const aToken = AToken.attach(address);
+    return {aToken}; 
 };
 
 const TokenInstance = async(deployer, name, symbol) => {
@@ -97,7 +98,7 @@ const TokenInstance = async(deployer, name, symbol) => {
     const token = await Token_new.deploy(name, symbol);
     await token.deployed();
     
-    return {token};
+    return token;
 }
 
 const PoolConfiguratorInstance = async() => {
