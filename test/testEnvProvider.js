@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-07 16:49:32
+ * @LastEditTime: 2023-03-08 13:58:03
  */
 
 const { BigNumber } = require("ethers");
@@ -151,13 +151,30 @@ const LendingRateOracleInstance = async(_asset) => {
     addressesProvider.setLendingRateOracle(oracle.address);
 }
 
-const PriceOracleInstance = async() => {
+const PriceOracleInstance = async(token) => {
+    const decimal = BigNumber.from(10).pow(18);
     const PriceOracle = await ethers.getContractFactory("PriceOracle");
     const priceOracle = await PriceOracle.deploy();
 
     await addressesProvider.setPriceOracle(priceOracle.address);
 
-    await priceOracle.setAssetPrice(ETHEREUM_ADDRESS, 1000);
+    await priceOracle.setAssetPrice(ETHEREUM_ADDRESS, BigNumber.from(decimal));
+    await priceOracle.setAssetPrice(token.address, BigNumber.from(10).mul(decimal));
+}
+
+const FeeProviderInstance = async() => {
+    const FeeProvider = await ethers.getContractFactory("FeeProvider");
+    const feeProvider = await FeeProvider.deploy();
+    await feeProvider.initialize(addressesProvider.address);
+
+    await addressesProvider.setFeeProvider(feeProvider.address);
+}
+
+const ParametersProviderInstance = async() => {
+    const ParametersProvider = await ethers.getContractFactory("LendingPoolParametersProvider");
+    const parametersProvider = await ParametersProvider.deploy();
+
+    await addressesProvider.setLendingPoolParametersProvider(parametersProvider.address);
 }
 
 module.exports = {
@@ -169,5 +186,7 @@ module.exports = {
     TokenInstance,
     PoolConfiguratorInstance,
     InterestRateStrategyInstance,
-    PriceOracleInstance
+    PriceOracleInstance,
+    FeeProviderInstance,
+    ParametersProviderInstance
 };

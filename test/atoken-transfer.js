@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-03-01 10:23:11
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-07 17:59:37
+ * @LastEditTime: 2023-03-08 14:06:19
  */
 const { BigNumber } = require("ethers");
 
@@ -18,7 +18,9 @@ const {
     PoolConfiguratorInstance,
     DataProviderInstance,
     InterestRateStrategyInstance,
-    PriceOracleInstance
+    PriceOracleInstance,
+    FeeProviderInstance,
+    ParametersProviderInstance
 } = require("./testEnvProvider");
 
 describe("atoken-transfer", function () {
@@ -39,7 +41,9 @@ describe("atoken-transfer", function () {
         //const { aToken } = await ATokenInstance(addressesProvider.address, token.address, await token.name(), await token.symbol());
         const { strategy } = await InterestRateStrategyInstance(token.address);
         const { poolConfigurator } = await PoolConfiguratorInstance();
-        await PriceOracleInstance();
+        await PriceOracleInstance(token);
+        await FeeProviderInstance();
+        await ParametersProviderInstance();
 
         //configuration of instances
         await pool.initialize(addressesProvider.address);
@@ -48,6 +52,7 @@ describe("atoken-transfer", function () {
 
         await poolConfigurator.refreshLendingPoolCoreConfiguration();
         await poolConfigurator.initReserve(token.address, 18, strategy.address);
+        await poolConfigurator.enableReserveAsCollateral(token.address, 80, 20, 3);
         await poolConfigurator.initReserveWithData(ETHEREUM_ADDRESS, "Aave Interest bearing ETH", "aETH", 18, strategy.address);
         await poolConfigurator.enableBorrowingOnReserve(ETHEREUM_ADDRESS, true);
 
@@ -138,11 +143,18 @@ describe("atoken-transfer", function () {
 
         const aTokenTransfer = BigNumber.from(1000).mul(decimal);
 
-        console.log(await core.getUserBasicReserveData(token.address, Accounts[0].address));
-        console.log(await core.getReserveConfiguration(token.address));
-
         await pool.borrow(ETHEREUM_ADDRESS, BigNumber.from(decimal).div(10), RATEMODE.STABLE, "0", {from: Accounts[0].address});
-
+        console.log(await core.getUserBorrowBalances(ETHEREUM_ADDRESS, Accounts[0].address));
+        console.log(await core.getUserBasicReserveData(ETHEREUM_ADDRESS, Accounts[0].address));
+        console.log(await dataProvider.calculateUserGlobalData(Accounts[0].address));
         await expect(aToken.transfer(Accounts[1].address, aTokenTransfer, {from: Accounts[0]}), "Transfer cannot be allowed");
+    });
+
+    it("User 1 tries to transfer 0 balance (revert expected)", async function () {
+        await expect(aToken.connect(Accounts[1]).transfer(Accounts[0].address, "0")).to.be.revertedWith("Transferred amount needs to be greater than zero");
+    });
+
+    it("User 0 repays the borrow, transfers aDAI back to user 1", async function () {
+        //await pool.repay(ETHEREUM_ADDRESS, )
     });
 });
