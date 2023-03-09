@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-03-01 10:23:11
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-09 15:45:55
+ * @LastEditTime: 2023-03-09 16:25:42
  */
 const { BigNumber } = require("ethers");
 
@@ -23,6 +23,7 @@ const {
     ParametersProviderInstance
 } = require("./testEnvProvider");
 const { ethers } = require("hardhat");
+const {instancesConfig} = require("./instanceConfigure");
 
 describe("atoken-transfer", function () {
     const decimal = BigNumber.from(10).pow(18);
@@ -31,37 +32,12 @@ describe("atoken-transfer", function () {
 
     async function init () {
         [...Accounts] = await ethers.getSigners();
-        //create of instances
-
-        const { addressesProvider } = await AddressesProviderInstance(Accounts[0]);
-        core = await LendingPoolCoreInstance();
-        pool = await LendingPoolInstance();
-        token = await TokenInstance(Accounts[1], "dai", "DAI");
-        // const { dataProvider } = await DataProviderInstance();
-        dataProvider = await DataProviderInstance();
-        //const { aToken } = await ATokenInstance(addressesProvider.address, token.address, await token.name(), await token.symbol());
-        const strategyOfToken = await InterestRateStrategyInstance(token.address);
-        const strategyOfEth = await InterestRateStrategyInstance(ETHEREUM_ADDRESS);
-        const { poolConfigurator } = await PoolConfiguratorInstance();
-        await PriceOracleInstance(token);
-        await FeeProviderInstance();
-        await ParametersProviderInstance();
-
         //configuration of instances
-        await pool.initialize(addressesProvider.address);
-        await core.initialize(addressesProvider.address);
-        await dataProvider.initialize(addressesProvider.address);
-
-        await poolConfigurator.refreshLendingPoolCoreConfiguration();
-        await poolConfigurator.initReserve(token.address, 18, strategyOfToken.address);
-        await poolConfigurator.enableReserveAsCollateral(token.address, 80, 20, 3);
-        await poolConfigurator.initReserveWithData(ETHEREUM_ADDRESS, "Aave Interest bearing ETH", "aETH", 18, strategyOfEth.address);
-        await poolConfigurator.enableBorrowingOnReserve(ETHEREUM_ADDRESS, true);
-
-        var reserve = await core.getReserveData(token.address);
-        aToken = await (await ATokenInstance(reserve.aTokenAddress)).aToken;
-
-        //return {Accounts, core, token, aToken, pool};
+        const config = await instancesConfig(Accounts);
+        core = config.core;
+        token = config.token;
+        aToken = config.aToken;
+        pool = config.pool;
     }
 
     before("initializing tests", async function () {
