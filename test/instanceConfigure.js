@@ -43,14 +43,14 @@ const instancesConfig = async(Accounts) => {
 
     await poolConfigurator.refreshLendingPoolCoreConfiguration();
     await poolConfigurator.initReserve(token.address, 18, strategyOfToken.address);
-    await poolConfigurator.enableReserveAsCollateral(token.address, 80, 20, 3);
+    await poolConfigurator.enableReserveAsCollateral(token.address, 80, 70, 103);
     await poolConfigurator.initReserveWithData(ETHEREUM_ADDRESS, "Aave Interest bearing ETH", "aETH", 18, strategyOfEth.address);
     await poolConfigurator.enableBorrowingOnReserve(ETHEREUM_ADDRESS, true);
 
     var reserve = await core.getReserveData(token.address);
     aToken = await (await ATokenInstance(reserve.aTokenAddress)).aToken;
 
-    return {core, token, aToken, pool};
+    return {core, token, aToken, pool, poolConfigurator};
 }
 
 module.exports = {
