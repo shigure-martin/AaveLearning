@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-02-28 09:54:52
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-08 13:58:03
+ * @LastEditTime: 2023-03-08 15:59:11
  */
 
 const { BigNumber } = require("ethers");
@@ -137,7 +137,7 @@ const InterestRateStrategyInstance = async(reserve) => {
 
     await LendingRateOracleInstance(reserve);
 
-    return { strategy };
+    return strategy;
 }
 
 const LendingRateOracleInstance = async(_asset) => {
