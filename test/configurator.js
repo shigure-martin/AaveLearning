@@ -3,7 +3,7 @@
  * @Author: Martin
  * @Date: 2023-03-01 10:59:33
  * @LastEditors: Martin
- * @LastEditTime: 2023-03-09 17:43:11
+ * @LastEditTime: 2023-03-10 14:37:40
  */
 const { expect } = require("chai");
 const { RAY, ETHEREUM_ADDRESS, APPROVAL_AMOUNT_LENDING_POOL_CORE, RATEMODE } = require("../utils/constants");
@@ -148,5 +148,85 @@ describe("Lending Pool Configurator", async function () {
         expect(isEnabled).to.be.equal(true);
     });
 
-    
+    it("Check the onlyLendingPoolManager on disableReserveStableBorrowRate", async function () {
+        await expect(poolConfigurator.connect(Accounts[2]).disableReserveStableBorrowRate(ETHEREUM_ADDRESS))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+    it("Check the onlyLendingPoolManager on enableReserveStableBorrowRate", async function () {
+        await expect(poolConfigurator.connect(Accounts[2]).enableReserveStableBorrowRate(ETHEREUM_ADDRESS))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+
+    it("Changes LTV of the reserve", async function () {
+        await poolConfigurator.setReserveBaseLTVasCollateral(ETHEREUM_ADDRESS, "60");
+        const data = await pool.getReserveConfigurationData(ETHEREUM_ADDRESS);
+        expect(data.ltv).to.be.equal("60", "Invalid LTV");
+    });
+
+    it("Check the onlyLendingPoolManager on setReserveBaseLTVasCollateral", async function () {
+        await expect(poolConfigurator.connect(Accounts[2]).setReserveBaseLTVasCollateral(ETHEREUM_ADDRESS, "75"))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+
+    it("Changes liquidation threshold of the reserve", async function () {
+        await poolConfigurator.setReserveLiquidationThreshold(ETHEREUM_ADDRESS, "75");
+        const data = await pool.getReserveConfigurationData(ETHEREUM_ADDRESS);
+        expect(data.liquidationThreshold).to.be.equal("75", "Invalid Liquidation threshold");
+    });
+    it("Check the onlyLendingPoolManager on setReserveLiquidationThreshold", async function () {
+        await expect(poolConfigurator.connect(Accounts[2]).setReserveLiquidationThreshold(ETHEREUM_ADDRESS, "80"))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+
+    it("Changes liquidation bonus of the reserve", async function () {
+        await poolConfigurator.setReserveLiquidationBonus(ETHEREUM_ADDRESS, "110");
+        const bonus = await core.getReserveLiquidationBonus(ETHEREUM_ADDRESS);
+        expect(bonus).to.be.equal("110", "Invalid Liquidation discount");
+    });
+    it("Check the onlyLendingPoolManager on setReserveLiquidationBonus", async function () {
+        expect(poolConfigurator.connect(Accounts[2]).setReserveLiquidationBonus(ETHEREUM_ADDRESS, "80"))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+
+    it("Check the onlyLendingPoolManager on setReserveDecimals", async function () {
+        expect(poolConfigurator.connect(Accounts[2]).setReserveDecimals(ETHEREUM_ADDRESS, "20"))
+            .to
+            .be
+            .revertedWith("The caller must be a lending pool manager");
+    });
+
+    it("Removes the last added reserve", async function () {
+        const reservesBefore = await pool.getReserves();
+
+        const lastReserve = reservesBefore[reservesBefore.length - 1];
+
+        await poolConfigurator.removeLastAddedReserve(lastReserve);
+
+        const reservesAfter = await pool.getReserves();
+
+        expect(reservesAfter.length).to.be.equal(reservesBefore.length - 1, "Invalid number of reserves after remove");
+    });
+
+    it("Reverts when trying to disable the DAI reserve with liquidity on it", async function () {
+        await token.connect(Accounts[2]).mint(BigNumber.from(1000).mul(decimal));
+
+        await token.connect(Accounts[2]).approve(core.address, APPROVAL_AMOUNT_LENDING_POOL_CORE);
+
+        await pool.connect(Accounts[2]).deposit(token.address, BigNumber.from(1000).mul(decimal), "0");
+
+        await expect(poolConfigurator.deactivateReserve(token.address))
+            .to
+            .be
+            .revertedWith("The liquidity of the reserve needs to be 0");
+    });
 });
